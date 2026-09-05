@@ -3410,7 +3410,13 @@ async function hapusFotoAnggotaTerkirim(gId, fotoIdx){
    memang real-time. Pesan yang terlewat direkam & diunggah ke Supabase
    Storage supaya bisa diputar ulang nanti.
    ================================================================ */
-const WA_ICE_SERVERS = [{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}];
+// WebRTC ICE: STUN membantu menemukan jalur langsung. TURN dapat ditambahkan
+// di sini untuk jaringan/operator yang memblokir koneksi P2P (credential jangan
+// ditanam permanen di HTML publik).
+const WA_ICE_SERVERS = [
+  {urls:'stun:stun.l.google.com:19302'},
+  {urls:'stun:stun1.l.google.com:19302'}
+];
 let waRoom = null;          // {id, ch, peers:Map, localStream}
 let waCurrentSpeaker = null;
 let waTargetUsername = null; // null = siaran ke semua di saluran
@@ -3704,38 +3710,177 @@ document.addEventListener('visibilitychange', ()=>{
 window.addEventListener('pageshow', ()=>walkieRecoverConnectionSoon());
 window.addEventListener('online', ()=>walkieRecoverConnectionSoon());
 
+function walkieSendSignal(payload){
+  if(!waRoom || !waRoom.ch) return;
+  try{
+    waRoom.ch.send({type:'broadcast', event:'signal', payload});
+  }catch(e){
+    console.warn('Walkie signaling gagal:', e);
+  }
+}
+
 function walkieConnectToPeer(username, isInitiator){
+  if(!waRoom || !username || username===session.username) return null;
+
+  const existing = waRoom.peers.get(username);
+  if(existing && existing.pc && !['closed','failed'].includes(existing.pc.connectionState)){
+    return existing;
+  }
+
   const pc = new RTCPeerConnection({iceServers:WA_ICE_SERVERS});
+  const entry = {
+    pc,
+    pendingIce: [],
+    makingOffer:false,
+    polite: !isInitiator
+  };
+  waRoom.peers.set(username, entry);
+
+  // Selalu tambahkan track mic yang sama. Track tetap disabled saat standby,
+  // sehingga audio hanya terkirim ketika tombol PTT ditekan.
   waRoom.localStream.getTracks().forEach(t=>pc.addTrack(t, waRoom.localStream));
-  pc.onicecandidate = (e)=>{ if(e.candidate) waRoom.ch.send({type:'broadcast', event:'signal', payload:{type:'ice', from:session.username, to:username, candidate:e.candidate}}); };
-  pc.ontrack = (e)=>{ walkiePlayRemoteStream(username, e.streams[0]); };
+
+  pc.onicecandidate = (e)=>{
+    if(e.candidate){
+      walkieSendSignal({
+        type:'ice',
+        from:session.username,
+        to:username,
+        candidate:e.candidate
+      });
+    }
+  };
+
+  pc.ontrack = (e)=>{
+    const stream = e.streams && e.streams[0];
+    if(stream) walkiePlayRemoteStream(username, stream);
+  };
+
   pc.onconnectionstatechange = ()=>{
     if(!waRoom || waExplicitlyLeft) return;
-    if(['failed','disconnected'].includes(pc.connectionState)) walkieRecoverConnectionSoon();
+    walkieRenderLiveUI();
+    if(['failed','disconnected'].includes(pc.connectionState)){
+      walkieRecoverConnectionSoon();
+    }
   };
-  waRoom.peers.set(username, {pc});
+
+  pc.oniceconnectionstatechange = ()=>{
+    if(!waRoom || waExplicitlyLeft) return;
+    if(['failed','disconnected'].includes(pc.iceConnectionState)){
+      walkieRecoverConnectionSoon();
+    }
+  };
+
   if(isInitiator){
-    pc.createOffer().then(offer=>pc.setLocalDescription(offer)).then(()=>{
-      waRoom.ch.send({type:'broadcast', event:'signal', payload:{type:'offer', from:session.username, to:username, sdp:pc.localDescription}});
+    // Gunakan satu offer saja untuk setiap peer.
+    Promise.resolve().then(async ()=>{
+      if(!waRoom || waRoom.peers.get(username)!==entry) return;
+      if(pc.signalingState!=='stable') return;
+      try{
+        entry.makingOffer = true;
+        const offer = await pc.createOffer();
+        if(!waRoom || waRoom.peers.get(username)!==entry) return;
+        await pc.setLocalDescription(offer);
+        walkieSendSignal({
+          type:'offer',
+          from:session.username,
+          to:username,
+          sdp:pc.localDescription
+        });
+      }catch(e){
+        console.warn('Gagal membuat offer Walkie:', e);
+      }finally{
+        entry.makingOffer = false;
+      }
     });
   }
+
   walkieRenderLiveUI();
+  return entry;
 }
+
 async function walkieHandleSignal(payload){
-  if(!waRoom) return;
-  let entry = waRoom.peers.get(payload.from);
-  if(payload.type==='offer'){
-    if(!entry){ walkieConnectToPeer(payload.from, false); entry = waRoom.peers.get(payload.from); }
-    await entry.pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
-    const answer = await entry.pc.createAnswer();
-    await entry.pc.setLocalDescription(answer);
-    waRoom.ch.send({type:'broadcast', event:'signal', payload:{type:'answer', from:session.username, to:payload.from, sdp:entry.pc.localDescription}});
-  } else if(payload.type==='answer'){
-    if(entry) await entry.pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
-  } else if(payload.type==='ice'){
-    if(entry){ try{ await entry.pc.addIceCandidate(payload.candidate); }catch(e){} }
+  if(!waRoom || !payload || !payload.from || payload.from===session.username) return;
+
+  const username = payload.from;
+  let entry = waRoom.peers.get(username);
+
+  try{
+    if(payload.type==='offer'){
+      // Jangan membuat dua RTCPeerConnection untuk orang yang sama.
+      if(!entry || !entry.pc || entry.pc.connectionState==='closed'){
+        entry = walkieConnectToPeer(username, false);
+      }
+      if(!entry) return;
+
+      const pc = entry.pc;
+      // "Polite" peer menerima offer yang datang saat terjadi glare.
+      const offerCollision = entry.makingOffer || pc.signalingState!=='stable';
+      if(offerCollision && !entry.polite) return;
+
+      if(offerCollision){
+        try{
+          await pc.setLocalDescription({type:'rollback'});
+        }catch(_){}
+      }
+
+      await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+
+      // Kandidat ICE yang datang sebelum remote description dipasang
+      // baru dimasukkan sekarang.
+      if(entry.pendingIce.length){
+        const pending = entry.pendingIce.splice(0);
+        for(const c of pending){
+          try{ await pc.addIceCandidate(c); }catch(e){ console.warn('ICE tertunda gagal:',e); }
+        }
+      }
+
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      walkieSendSignal({
+        type:'answer',
+        from:session.username,
+        to:username,
+        sdp:pc.localDescription
+      });
+
+    }else if(payload.type==='answer'){
+      if(!entry) return;
+      const pc = entry.pc;
+      if(pc.signalingState!=='have-local-offer') return;
+
+      await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+
+      if(entry.pendingIce.length){
+        const pending = entry.pendingIce.splice(0);
+        for(const c of pending){
+          try{ await pc.addIceCandidate(c); }catch(e){ console.warn('ICE tertunda gagal:',e); }
+        }
+      }
+
+    }else if(payload.type==='ice'){
+      if(!entry){
+        entry = walkieConnectToPeer(username, false);
+      }
+      if(!entry) return;
+
+      const pc = entry.pc;
+      if(pc.remoteDescription && pc.remoteDescription.type){
+        try{
+          await pc.addIceCandidate(payload.candidate);
+        }catch(e){
+          console.warn('addIceCandidate gagal:',e);
+        }
+      }else{
+        // Jangan buang kandidat hanya karena datang lebih cepat dari SDP.
+        entry.pendingIce.push(payload.candidate);
+      }
+    }
+  }catch(e){
+    console.warn('Sinyal Walkie gagal diproses:', payload.type, e);
   }
 }
+
 function walkieInitAudioGraph(){
   // Audio standby harus benar-benar diam. AudioContext hanya dipakai saat
   // ada aksi pengguna / event bicara, tanpa oscillator atau noise yang looping.
@@ -3755,7 +3900,15 @@ function walkiePlayRemoteStream(username, stream){
   if(!waAudioCtx) walkieInitAudioGraph();
   const ctx = waAudioCtx;
   if(ctx.state==='suspended') ctx.resume().catch(()=>{});
-  if(waRemoteSources.has(username)) return;
+  const existingRemote = waRemoteSources.get(username);
+  if(existingRemote){
+    if(existingRemote.audioEl && existingRemote.audioEl.srcObject!==stream){
+      existingRemote.audioEl.srcObject = stream;
+      try{ existingRemote.audioEl.play(); }catch(_){}
+    }
+    walkieUnlockRemoteAudio();
+    return;
+  }
 
   // WAJIB: pasang track audio remote ke elemen <audio> sungguhan lebih dulu.
   // Tanpa ini, di sebagian browser (terutama Chrome/Android) MediaStream dari
@@ -3767,8 +3920,10 @@ function walkiePlayRemoteStream(username, stream){
   audioEl.muted = false;      // jangan pernah biarkan audio remote dalam keadaan muted
   audioEl.volume = 1;         // volume normal, jangan sampai 0
   audioEl.srcObject = stream;
+  audioEl.setAttribute('playsinline','');
   audioEl.style.display = 'none';
   document.body.appendChild(audioEl);
+  try{ audioEl.load(); }catch(_){}
   const tryPlay = ()=>{
     const p = audioEl.play();
     if(p && p.catch){
@@ -3928,7 +4083,16 @@ function walkieStartRecording(){
 async function walkieStopRecordingAndUpload(){
   if(!waRecorder) return;
   const roomAtStart = waRoom;
-  await new Promise(res=>{ waRecorder.onstop = res; try{ waRecorder.stop(); }catch(e){ res(); } });
+  await new Promise(res=>{
+    const r = waRecorder;
+    if(!r){ res(); return; }
+    const done = ()=>{ waRecorder = null; res(); };
+    r.addEventListener('stop', done, {once:true});
+    try{
+      if(r.state!=='inactive') r.stop();
+      else done();
+    }catch(e){ done(); }
+  });
   if(!waRecChunks.length || !roomAtStart) return;
   const blob = new Blob(waRecChunks, {type:'audio/webm'});
   if(blob.size < 800) return; // terlalu pendek, kemungkinan hanya derau
