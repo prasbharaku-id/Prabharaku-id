@@ -3628,6 +3628,20 @@ async function walkieJoinChannel(channelId){
   await rtc.subscribe(async (status)=>{
     if(status==='SUBSCRIBED'){
       await rtc.track({username:session.username, nama:session.nama, online_at:Date.now()});
+
+      // Penting: anggota yang sudah berada di saluran sebelum kita masuk
+      // tidak selalu memicu event presence "join" di perangkat ini.
+      // Hubungkan juga semua anggota yang sudah online sekarang.
+      setTimeout(()=>{
+        if(!waRoom || waRoom.ch!==rtc || waExplicitlyLeft) return;
+        const state=rtc.presenceState();
+        const online=Object.values(state).flat();
+        online.forEach(p=>{
+          if(p.username && p.username!==session.username && !waRoom.peers.has(p.username)){
+            walkieConnectToPeer(p.username, true);
+          }
+        });
+      }, 150);
     }
   });
   walkieUnlockRemoteAudio(); // gabung saluran = user gesture, coba aktifkan audio yang sempat diblokir
@@ -3890,87 +3904,84 @@ function walkieInitAudioGraph(){
 // Simpan source audio remote supaya tidak dibuat berulang saat renegosiasi.
 const waRemoteSources = new Map();
 function walkieUnlockRemoteAudio(){
-  // Dipanggil saat ada interaksi pengguna (PTT, pilih saluran, dsb) untuk
-  // "membangunkan" AudioContext & elemen <audio> remote yang sempat diblokir
-  // oleh kebijakan autoplay browser (khususnya Chrome Android).
   if(waAudioCtx && waAudioCtx.state==='suspended') waAudioCtx.resume().catch(()=>{});
-  waRemoteSources.forEach(n=>{ if(n.audioEl && n.audioEl.paused) n.audioEl.play().catch(()=>{}); });
+  waRemoteSources.forEach(item=>{
+    if(!item || !item.audioEl) return;
+    item.audioEl.muted=false;
+    item.audioEl.volume=1;
+    const p=item.audioEl.play();
+    if(p && p.catch) p.catch(()=>{});
+  });
 }
 function walkiePlayRemoteStream(username, stream){
-  if(!waAudioCtx) walkieInitAudioGraph();
-  const ctx = waAudioCtx;
-  if(ctx.state==='suspended') ctx.resume().catch(()=>{});
-  const existingRemote = waRemoteSources.get(username);
-  if(existingRemote){
-    if(existingRemote.audioEl && existingRemote.audioEl.srcObject!==stream){
-      existingRemote.audioEl.srcObject = stream;
-      try{ existingRemote.audioEl.play(); }catch(_){}
-    }
-    walkieUnlockRemoteAudio();
-    return;
+  if(!stream) return;
+
+  // Gunakan elemen <audio> HTML5 secara langsung untuk jalur suara WebRTC.
+  // Jangan melewatkan remote stream melalui AudioContext: pada beberapa
+  // browser/mobile, MediaElementAudioSourceNode + autoplay dapat membuat
+  // stream tersambung tetapi tidak terdengar.
+  let item = waRemoteSources.get(username);
+
+  if(!item){
+    const audioEl = document.createElement('audio');
+    audioEl.autoplay = true;
+    audioEl.controls = false;
+    audioEl.muted = false;
+    audioEl.volume = 1;
+    audioEl.playsInline = true;
+    audioEl.setAttribute('playsinline','');
+    audioEl.setAttribute('webkit-playsinline','');
+    audioEl.style.cssText = 'position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;left:-10px;top:-10px;';
+    document.body.appendChild(audioEl);
+
+    item = {audioEl, stream};
+    waRemoteSources.set(username, item);
+  }else{
+    item.stream = stream;
   }
 
-  // WAJIB: pasang track audio remote ke elemen <audio> sungguhan lebih dulu.
-  // Tanpa ini, di sebagian browser (terutama Chrome/Android) MediaStream dari
-  // WebRTC bisa "diterima" tapi tidak benar-benar didekode/diputar — itulah
-  // sebab suara lawan bicara tidak terdengar walau koneksi sudah tersambung.
-  const audioEl = document.createElement('audio');
-  audioEl.autoplay = true;
-  audioEl.playsInline = true; // wajib di iOS/Android agar tidak fullscreen & tidak diblokir
-  audioEl.muted = false;      // jangan pernah biarkan audio remote dalam keadaan muted
-  audioEl.volume = 1;         // volume normal, jangan sampai 0
+  const audioEl = item.audioEl;
   audioEl.srcObject = stream;
-  audioEl.setAttribute('playsinline','');
-  audioEl.style.display = 'none';
-  document.body.appendChild(audioEl);
-  try{ audioEl.load(); }catch(_){}
-  const tryPlay = ()=>{
-    const p = audioEl.play();
-    if(p && p.catch){
-      p.catch(()=>{
-        // Autoplay diblokir browser: JANGAN anggap gagal selamanya.
-        // Gunakan interaksi pengguna berikutnya (tekan PTT/tombol saluran, dst)
-        // sebagai user gesture untuk mengaktifkan kembali AudioContext + audio ini.
-        const resumeOnGesture = ()=>{ walkieUnlockRemoteAudio(); };
-        document.addEventListener('pointerdown', resumeOnGesture, {once:true});
-        document.addEventListener('click', resumeOnGesture, {once:true});
-      });
-    }
-  };
-  tryPlay();
+  audioEl.muted = false;
+  audioEl.volume = 1;
 
-  // Karakter suara HT: potong frekuensi yang terlalu rendah/tinggi,
-  // sedikit mid boost, kompresi ringan, lalu saturasi sangat tipis.
-  // Ini hanya memproses AUDIO YANG DITERIMA (dari elemen <audio> di atas);
-  // arsitektur WebRTC/PTT/broadcast/signaling tetap persis sama.
-  const src = ctx.createMediaElementSource(audioEl);
-  const hp = ctx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=280; hp.Q.value=0.7;
-  const lp = ctx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=3400; lp.Q.value=0.7;
-  const mid = ctx.createBiquadFilter(); mid.type='peaking'; mid.frequency.value=1450; mid.Q.value=0.9; mid.gain.value=2.2;
-  const comp = ctx.createDynamicsCompressor();
-  comp.threshold.value=-24; comp.knee.value=18; comp.ratio.value=3.2; comp.attack.value=0.003; comp.release.value=0.08;
-  const shaper = ctx.createWaveShaper();
-  const curve = new Float32Array(256);
-  for(let i=0;i<curve.length;i++){
-    const x=(i*2)/(curve.length-1)-1;
-    curve[i]=Math.tanh(x*1.12)*0.92;
+  // Coba langsung. Jika browser menolak autoplay, PTT / tombol suara
+  // berikutnya akan memanggil walkieUnlockRemoteAudio().
+  const p = audioEl.play();
+  if(p && p.catch){
+    p.catch(()=>{
+      item.autoplayBlocked = true;
+    });
   }
-  shaper.curve=curve; shaper.oversample='2x';
-  const gain = ctx.createGain(); gain.gain.value=0.92; // suara harus tetap jelas & terdengar
-  src.connect(hp).connect(lp).connect(mid).connect(comp).connect(shaper).connect(gain).connect(ctx.destination);
-  waRemoteSources.set(username,{src,hp,lp,mid,comp,shaper,gain,audioEl});
 }
-function walkieRemoveRemoteStream(username){
-  const n=waRemoteSources.get(username);
-  if(!n) return;
-  try{ n.src.disconnect(); n.hp.disconnect(); n.lp.disconnect(); n.mid.disconnect(); n.comp.disconnect(); n.shaper.disconnect(); n.gain.disconnect(); }catch(e){}
-  if(n.audioEl){
-    try{
-      n.audioEl.pause();
-      n.audioEl.srcObject = null;
-      n.audioEl.remove();
-    }catch(e){}
+
+function walkieUnlockRemoteAudio(){
+  // AudioContext hanya dipakai untuk efek HT, bukan untuk jalur suara utama.
+  if(waAudioCtx && waAudioCtx.state==='suspended'){
+    waAudioCtx.resume().catch(()=>{});
   }
+
+  waRemoteSources.forEach(item=>{
+    if(!item || !item.audioEl) return;
+    const el = item.audioEl;
+    el.muted = false;
+    el.volume = 1;
+    const p = el.play();
+    if(p && p.catch) p.catch(()=>{});
+    item.autoplayBlocked = false;
+  });
+}
+
+function walkieRemoveRemoteStream(username){
+  const item=waRemoteSources.get(username);
+  if(!item) return;
+  try{
+    if(item.audioEl){
+      item.audioEl.pause();
+      item.audioEl.srcObject=null;
+      item.audioEl.remove();
+    }
+  }catch(e){}
   waRemoteSources.delete(username);
 }
 function walkieHtTone(start){
@@ -4041,7 +4052,11 @@ async function walkieStartTalk(){
   // 2) Setelah efek pembuka selesai, mikrofon baru diaktifkan.
   await new Promise(r=>setTimeout(r, WA_CLICK_MS));
   if(!waRoom || !waTalking || myToken!==waTalkStartToken) return; // sudah dilepas duluan
-  waRoom.localStream.getAudioTracks().forEach(t=>t.enabled=true);
+  waRoom.localStream.getAudioTracks().forEach(t=>{
+    t.enabled=true;
+    try{ t.contentHint='speech'; }catch(_){}
+  });
+  walkieUnlockRemoteAudio();
   waRoom.peers.forEach((p,username)=>{
     const sender = p.pc.getSenders().find(s=>s.track && s.track.kind==='audio');
     if(sender) sender.track.enabled = !waTargetUsername || waTargetUsername===username;
@@ -4119,6 +4134,9 @@ function walkieRenderLiveUI(){
       <div style="min-height:20px;font-size:12.5px;font-weight:700;color:${waCurrentSpeaker?'#146c2e':'var(--muted)'};">
         ${waCurrentSpeaker ? '🔊 '+esc(waCurrentSpeaker===session.username?'Kamu sedang bicara…':(DB.users.find(u=>u.username===waCurrentSpeaker)||{nama:waCurrentSpeaker}).nama+' sedang bicara…') : 'Saluran tenang'}
       </div>
+      <button type="button" onclick="walkieUnlockRemoteAudio()" style="width:100%;padding:10px 12px;border-radius:10px;background:#e8f8ee;color:#146c2e;border:1px solid #bfe9cd;font-weight:800;font-size:12px;margin-bottom:10px;">
+        🔊 AKTIFKAN SUARA WALKIE
+      </button>
       <button
         id="wa-talk-btn"
         style="width:150px;height:150px;border-radius:50%;background:${waTalking?'#c81e1e':'var(--navy)'};color:#fff;font-weight:800;font-size:13px;border:none;margin:16px auto;display:flex;align-items:center;justify-content:center;text-align:center;padding:10px;user-select:none;-webkit-user-select:none;touch-action:none;white-space:pre-line;line-height:1.4;"
