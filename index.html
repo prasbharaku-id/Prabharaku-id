@@ -1814,6 +1814,7 @@ function renderProfil(){
         <div class="info-row"><span class="k">Bergabung</span><span class="v">${fmtDate(session.joined)}</span></div>
       ` : `
         <div class="info-row"><span class="k">Jabatan</span><span class="v">${esc(a?.jabatan||'Anggota Biasa')}</span></div>
+        <div class="info-row"><span class="k">Agama</span><span class="v">${esc(a?.agama||'-')}</span></div>
         <div class="info-row"><span class="k">Angkatan</span><span class="v">${a?.angkatan?('Angkatan '+a.angkatan+' (Tahun '+tahunMasukAngkatan(a.angkatan)+')'):'-'}</span></div>
         <div class="info-row"><span class="k">Status Online</span><span class="v">🟢 Online</span></div>
         <div class="info-row"><span class="k">Status Akun</span><span class="v">${a && a.status==='Nonaktif' ? 'Tidak Aktif' : 'Aktif'}</span></div>
@@ -2437,6 +2438,17 @@ function getSesiTerakhirHariIni(){
   return [...list].sort((a,b)=>new Date(b.waktuDibuka)-new Date(a.waktuDibuka))[0];
 }
 function getSesiById(id){ return (DB.absensiSesi||[]).find(s=>s.id===id) || null; }
+function sesiMencakupAngkatan(sesi, angkatan){
+  if(!sesi) return false;
+  const daftar = Array.isArray(sesi.angkatanTarget) ? sesi.angkatanTarget.map(String) : null;
+  if(!daftar || !daftar.length) return true; // kompatibel dengan sesi lama
+  return daftar.includes(String(angkatan==null?'':angkatan));
+}
+function labelAngkatanTarget(sesi){
+  const daftar = Array.isArray(sesi?.angkatanTarget) ? sesi.angkatanTarget.map(String).filter(Boolean) : [];
+  if(!daftar.length) return 'Semua Angkatan';
+  return daftar.sort((a,b)=>Number(b)-Number(a)).map(x=>`Angkatan ${esc(x)}`).join(', ');
+}
 
 // Setelah waktu tutup suatu sesi tercapai, siapapun yang belum mengisi absen pada
 // sesi itu otomatis dicatat ALPA (disetujui otomatis oleh sistem, tetap bisa diubah manual).
@@ -2444,7 +2456,7 @@ function ensureAlpaProcessed(){
   let adaPerubahanAbsensi = false, adaPerubahanSesi = false;
   (DB.absensiSesi||[]).forEach(sesi=>{
     if(sesi.alpaDiproses || !sudahLewatTutup(sesi)) return;
-    DB.anggota.filter(a=>a.status==='Aktif').forEach(a=>{
+    DB.anggota.filter(a=>a.status==='Aktif' && sesiMencakupAngkatan(sesi,a.angkatan)).forEach(a=>{
       if(!DB.absensi.some(r=>r.anggotaId===a.id && r.sesiId===sesi.id)){
         DB.absensi.push({
           id:uid(), sesiId:sesi.id, anggotaId:a.id, nama:a.nama, angkatan:a.angkatan||null, jabatan:a.jabatan||'Anggota Biasa',
@@ -2503,6 +2515,7 @@ function renderAbsenSaya(){
         <div style="font-weight:800;font-size:14px;">⏰ ABSEN SEDANG BERLANGSUNG</div>
         <div style="font-size:11px;color:var(--muted);margin-top:2px;">📅 ${fmtDate(sesiAktif.tanggal)} | 🕒 ${esc(sesiAktif.jamMulai)} — ${esc(sesiAktif.jamSelesai)}</div>
         <div style="font-size:11.5px;margin-top:4px;">📝 Kegiatan: ${esc(sesiAktif.keterangan||'-')}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:3px;">👥 Target: ${labelAngkatanTarget(sesiAktif)}</div>
         <div style="margin-top:10px;">${absenStatusBadge(sudahDiisi.status)}</div>
         <div class="role-pill" style="background:${sudahDiisi.approval==='Disetujui'?'#e8f8ee':'#fff7e6'};color:${sudahDiisi.approval==='Disetujui'?'#146c2e':'#8a5a00'};margin-top:10px;">${sudahDiisi.approval==='Disetujui'?'✓ Disetujui':'⏳ Menunggu Persetujuan'}</div>
         ${sudahDiisi.keterangan ? `<div style="font-size:11.5px;color:var(--muted);margin-top:8px;">Keterangan: ${esc(sudahDiisi.keterangan)}</div>` : ''}
@@ -2513,6 +2526,7 @@ function renderAbsenSaya(){
         <div style="font-weight:800;font-size:14px;">⏰ ABSEN SEDANG BERLANGSUNG</div>
         <div style="font-size:11px;color:var(--muted);margin-top:2px;">📅 ${fmtDate(sesiAktif.tanggal)} | 🕒 ${esc(sesiAktif.jamMulai)} — ${esc(sesiAktif.jamSelesai)}</div>
         <div style="font-size:11.5px;margin-top:4px;">📝 Kegiatan: ${esc(sesiAktif.keterangan||'-')}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:3px;">👥 Target: ${labelAngkatanTarget(sesiAktif)}</div>
         <div style="font-size:11px;color:var(--muted);margin-top:10px;">Pilih Kehadiran:</div>
         <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
           <button class="btn-primary" style="flex:1;min-width:90px;" onclick="submitAbsenSaya('Hadir')">✅ Hadir</button>
@@ -2551,6 +2565,11 @@ function submitAbsenSaya(status){
   if(!a) return;
   const sesiAktif = getSesiAktif();
   if(!sesiAktif){ toast('Waktu absen sudah ditutup.'); renderAbsenSaya(); return; }
+  if(!sesiMencakupAngkatan(sesiAktif,a.angkatan)){
+    toast('Absen ini hanya dibuka untuk angkatan yang dipilih Admin/Sekretaris.');
+    renderAbsenSaya();
+    return;
+  }
   if(DB.absensi.some(r=>r.anggotaId===a.id && r.sesiId===sesiAktif.id)){ toast('Kamu sudah mengisi absen ini.'); return; }
   if(status==='Hadir'){
     simpanAbsenSaya(a, sesiAktif, status, '');
@@ -2588,8 +2607,23 @@ function renderDaftarHadir(){
   if(!DaftarHadirState.sesiTerpilih || !allSessions.some(s=>s.id===DaftarHadirState.sesiTerpilih)) DaftarHadirState.sesiTerpilih=allSessions.length?allSessions[0].id:null;
   const selected=DaftarHadirState.sesiTerpilih?getSesiById(DaftarHadirState.sesiTerpilih):null;
   const rows=allSessions.length?allSessions.map(s=>`<div class="admin-row" style="cursor:pointer;${s.id===DaftarHadirState.sesiTerpilih?'background:var(--bg,#f4f6fa);':''}" onclick="pilihSesiDaftarHadir('${s.id}')"><div class="grow"><div class="name">${fmtDate(s.tanggal)} · ${esc(s.keterangan||'-')}</div><div class="meta">${esc(s.mode==='manual'?'📝 Absen Manual':'📷 Absen Online')} · ${esc(s.jamMulai||'-')}</div></div>${canManageAbsensi()?`<button class="btn-danger" style="padding:7px 10px;border-radius:8px;font-size:11px;font-weight:800;" onclick="event.stopPropagation();hapusSesiAbsensi('${s.id}')">🗑️ HAPUS</button>`:''}</div>`).join(''):'<div class="empty-state">Belum ada tanggal/kegiatan yang memiliki absensi.</div>';
-  const list=selected?(DB.absensi||[]).filter(r=>r.sesiId===selected.id).sort((a,b)=>String(a.nama||'').localeCompare(String(b.nama||''),'id')):[];
-  const table=`<div class="card table-wrap" style="padding:0;"><table id="dh-riwayat-table" style="width:100%;border-collapse:collapse;font-size:11.5px;"><thead><tr style="background:var(--bg,#f4f6fa);"><th style="padding:9px 8px;">No</th><th style="padding:9px 8px;text-align:left;">Nama Lengkap</th><th style="padding:9px 8px;text-align:left;">Angkatan</th><th style="padding:9px 8px;text-align:left;">Status</th></tr></thead><tbody>${list.map((r,i)=>`<tr style="border-top:1px solid var(--line);"><td style="padding:8px;">${i+1}</td><td style="padding:8px;font-weight:700;">${esc(r.nama||'-')}</td><td style="padding:8px;">${esc(String(r.angkatan||'-'))}</td><td style="padding:8px;">${absenStatusBadge(r.status==='Tidak Hadir'?'Alpa':r.status)}</td></tr>`).join('')||'<tr><td colspan="4" class="empty-state">Belum ada data absensi.</td></tr>'}</tbody></table></div>`;
+  const list=selected?(DB.absensi||[]).filter(r=>r.sesiId===selected.id):[];
+  const grouped = {};
+  list.forEach(r=>{
+    const key = (r.angkatan===null || r.angkatan===undefined || String(r.angkatan).trim()==='') ? '__belum__' : String(r.angkatan);
+    (grouped[key] ||= []).push(r);
+  });
+  const groupKeys = Object.keys(grouped).filter(k=>k!=='__belum__').sort((a,b)=>Number(b)-Number(a));
+  if(grouped.__belum__) groupKeys.push('__belum__');
+  const groupedTable = groupKeys.map(key=>{
+    const rows = grouped[key].sort((a,b)=>String(a.nama||'').localeCompare(String(b.nama||''),'id'));
+    const title = key==='__belum__' ? '⚠️ BELUM DIISI ANGKATAN' : `📌 ANGKATAN ${esc(key)}`;
+    return `<div style="margin-bottom:14px;">
+      <div style="font-size:12.5px;font-weight:800;color:var(--navy);padding:8px 4px;">${title}</div>
+      <div class="card table-wrap" style="padding:0;margin-bottom:0;"><table style="width:100%;border-collapse:collapse;font-size:11.5px;"><thead><tr style="background:var(--bg,#f4f6fa);"><th style="padding:9px 8px;">No</th><th style="padding:9px 8px;text-align:left;">Nama Lengkap</th><th style="padding:9px 8px;text-align:left;">Status</th><th style="padding:9px 8px;text-align:left;">Ket</th></tr></thead><tbody>${rows.map((r,i)=>`<tr style="border-top:1px solid var(--line);"><td style="padding:8px;">${i+1}</td><td style="padding:8px;font-weight:700;">${esc(r.nama||'-')}</td><td style="padding:8px;">${absenStatusBadge(r.status==='Tidak Hadir'?'Alpa':r.status)}</td><td style="padding:8px;">${esc(r.keterangan||'-')}</td></tr>`).join('')}</tbody></table></div>
+    </div>`;
+  }).join('');
+  const table = groupedTable || '<div class="card"><div class="empty-state">Belum ada data absensi.</div></div>';
   document.getElementById('content').innerHTML=`<div class="section-title">Daftar Hadir</div><div class="card"><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;"><div><div style="font-size:10px;color:var(--muted);">Nama Kegiatan</div><div style="font-weight:800;font-size:12px;">${esc(selected?.keterangan||'-')}</div></div><div><div style="font-size:10px;color:var(--muted);">Tanggal/Bulan/Tahun</div><div style="font-weight:800;font-size:12px;">${selected?fmtDate(selected.tanggal):'-'}</div></div></div><button class="btn-outline" style="width:100%;margin-top:10px;" onclick="document.getElementById('dh-all').style.display=document.getElementById('dh-all').style.display==='none'?'block':'none'">🔍 Lihat Semua Absen</button></div><div id="dh-all" style="display:block;"><div class="section-title">Daftar Tanggal & Kegiatan</div><div class="card" style="padding:6px 12px;">${rows}</div></div>${selected?`<div class="section-title">${esc(selected.keterangan||'-')} — ${fmtDate(selected.tanggal)}</div>${table}${rekapAbsensiHtml(list)}<button class="btn-outline" style="width:100%;margin-top:4px;" onclick="kembaliDaftarHadir()">← Kembali</button>`:'<div class="empty-state">Pilih tanggal untuk melihat daftar hadir.</div>'}`;
 }
 function pilihSesiDaftarHadir(id){ DaftarHadirState.sesiTerpilih=id; renderDaftarHadir(); }
@@ -2634,6 +2668,33 @@ function absensiTableHtml(list, tableId, showUbah){
   `;
 }
 
+function absensiTableGroupedHtml(list, tableId, showUbah){
+  const grouped={};
+  (list||[]).forEach(r=>{
+    const key=(r.angkatan===null||r.angkatan===undefined||String(r.angkatan).trim()==='')?'__belum__':String(r.angkatan);
+    (grouped[key] ||= []).push(r);
+  });
+  const keys=Object.keys(grouped).filter(k=>k!=='__belum__').sort((a,b)=>Number(b)-Number(a));
+  if(grouped.__belum__) keys.push('__belum__');
+  if(!keys.length) return '<div class="card"><div class="empty-state">Belum ada data absensi.</div></div>';
+  return keys.map(key=>{
+    const rows=grouped[key].sort((a,b)=>String(a.nama||'').localeCompare(String(b.nama||''),'id'));
+    const title=key==='__belum__'?'⚠️ BELUM DIISI ANGKATAN':`📌 ANGKATAN ${esc(key)}`;
+    return `<div style="margin-bottom:14px;">
+      <div style="font-size:12.5px;font-weight:800;color:var(--navy);padding:8px 4px;">${title}</div>
+      <div class="card table-wrap" style="padding:0;"><table id="${esc(tableId)}-${esc(key)}" style="width:100%;border-collapse:collapse;font-size:11.5px;">
+        <thead><tr style="background:var(--bg,#f4f6fa);">
+          <th style="padding:9px 8px;text-align:left;">No</th><th style="padding:9px 8px;text-align:left;">Nama</th><th style="padding:9px 8px;text-align:left;">Kegiatan</th><th style="padding:9px 8px;text-align:left;">Tanggal</th><th style="padding:9px 8px;text-align:left;">Status</th><th style="padding:9px 8px;text-align:left;">Keterangan</th><th style="padding:9px 8px;text-align:left;">Disetujui Oleh</th>${showUbah?'<th style="padding:9px 8px;"></th>':''}
+        </tr></thead><tbody>
+        ${rows.map((r,i)=>{
+          const a=DB.anggota.find(x=>x.id===r.anggotaId), sesi=getSesiById(r.sesiId);
+          let disetujui=r.disetujuiOleh?esc(r.disetujuiOleh):'-';
+          if(r.diubahOleh) disetujui+=` <span style="color:var(--muted);">(diubah oleh ${esc(r.diubahOleh)})</span>`;
+          return `<tr style="border-top:1px solid var(--line);"><td style="padding:8px;">${i+1}</td><td style="padding:8px;font-weight:700;">${esc(r.nama||(a?a.nama:'Anggota tidak ditemukan'))}</td><td style="padding:8px;">${esc(sesi?sesi.keterangan||'-':'-')}</td><td style="padding:8px;">${fmtDate(r.tanggal)}</td><td style="padding:8px;">${absenStatusBadge(r.status)}</td><td style="padding:8px;">${esc(r.keterangan||'-')}</td><td style="padding:8px;">${disetujui}</td>${showUbah?`<td style="padding:8px;"><button class="btn-outline" style="padding:4px 10px;font-size:11px;" onclick="openUbahStatusAbsen('${r.id}')">Ubah</button></td>`:''}</tr>`;
+        }).join('')}
+        </tbody></table></div></div>`;
+  }).join('');
+}
 /* ---------------- ADMIN & SEKRETARIS: Kelola Absensi (buka sesi berkali-kali, setujui, ubah) ---------------- */
 function renderAdminAbsen(){
   if(!canManageAbsensi()){ document.getElementById('content').innerHTML = '<div class="empty-state">Anda tidak memiliki akses ke halaman ini.</div>'; return; }
@@ -2658,7 +2719,7 @@ function renderAdminAbsenOnline(){
   if(!canManageAbsensi()){ document.getElementById('content').innerHTML = '<div class="empty-state">Anda tidak memiliki akses ke halaman ini.</div>'; return; }
   ensureAlpaProcessed();
   const sesiAktif = getSesiAktif();
-  const pending = DB.absensi.filter(r=>r.approval==='Menunggu Persetujuan').sort((x,y)=>x.nama.localeCompare(y.nama));
+  const pending = DB.absensi.filter(r=>r.approval==='Menunggu Persetujuan').sort((x,y)=>{ const ax=x.angkatan==null?-1:Number(x.angkatan), ay=y.angkatan==null?-1:Number(y.angkatan); return ay-ax || String(x.nama||'').localeCompare(String(y.nama||''),'id'); });
   const hasil = [...DB.absensi].filter(r=>r.approval!=='Menunggu Persetujuan').sort((x,y)=>new Date(y.tanggal+' '+(y.waktu||'00:00'))-new Date(x.tanggal+' '+(x.waktu||'00:00')));
 
   let controlHtml;
@@ -2668,6 +2729,7 @@ function renderAdminAbsenOnline(){
         <div style="font-weight:800;font-size:13px;">🔴 Absen Sedang Berlangsung</div>
         <div style="font-size:11.5px;color:var(--muted);margin-top:4px;">📅 ${fmtDate(sesiAktif.tanggal)} · 🕒 ${esc(sesiAktif.jamMulai)} – ${esc(sesiAktif.jamSelesai)} · dibuka oleh ${esc(sesiAktif.dibukaOleh)}</div>
         <div style="font-size:11.5px;margin-top:2px;">📝 Kegiatan: ${esc(sesiAktif.keterangan||'-')}</div>
+        <div style="font-size:11.5px;margin-top:3px;">👥 Target: ${labelAngkatanTarget(sesiAktif)}</div>
         <button class="btn-outline" style="width:100%;margin-top:10px;" onclick="tutupSesiSekarang('${sesiAktif.id}')">⏹ Tutup Absen Ini Sekarang</button>
       </div>`;
   } else {
@@ -2678,6 +2740,14 @@ function renderAdminAbsenOnline(){
         <div class="field"><label>Tanggal Absen</label><input type="date" id="absen-tanggal" value="${esc(tglDefault)}"></div>
         <div class="field"><label>Jam Mulai Absen</label><input type="time" id="absen-jam-mulai" value="08:00"></div>
         <div class="field"><label>Jam Tutup Absen</label><input type="time" id="absen-jam-selesai" value="09:00"></div>
+        <div class="field"><label>Angkatan yang Boleh Absen</label>
+          <div id="absen-angkatan-pilihan" style="display:flex;flex-wrap:wrap;gap:7px;padding:2px 0;">
+            ${getAngkatanList().sort((a,b)=>b-a).map(n=>`<label style="display:flex;align-items:center;gap:5px;border:1px solid var(--line);border-radius:9px;padding:7px 9px;font-size:11.5px;font-weight:700;cursor:pointer;">
+              <input type="checkbox" class="absen-angkatan-cb" value="${n}"> Angkatan ${n}
+            </label>`).join('')}
+          </div>
+          <div style="font-size:10px;color:var(--muted);margin-top:5px;">Pilih minimal satu angkatan. Bisa pilih 1 saja (contoh: 22) atau beberapa sekaligus.</div>
+        </div>
         <div class="field"><label>Keterangan Absen (Nama Kegiatan)</label><input type="text" id="absen-keterangan" placeholder="Contoh: Latihan Rutin Saka Bhayangkara"></div>
         <button class="btn-primary" style="width:100%;" onclick="mulaiAbsenBaru()">▶ Mulai Absen</button>
       </div>`;
@@ -2710,7 +2780,7 @@ function renderAdminAbsenOnline(){
       <button class="btn-outline" style="flex:1;" onclick="exportAbsensiCSV()">⬇ Ekspor CSV/Excel</button>
       <button class="btn-outline" style="flex:1;" onclick="printAbsensi('absen-table')">🖨 Cetak</button>
     </div>
-    ${absensiTableHtml(hasil, 'absen-table', true)}
+    ${absensiTableGroupedHtml(hasil, 'absen-table', true)}
   `;
 }
 async function mulaiAbsenBaru(){
@@ -2719,10 +2789,12 @@ async function mulaiAbsenBaru(){
   const jamMulai = document.getElementById('absen-jam-mulai').value;
   const jamSelesai = document.getElementById('absen-jam-selesai').value;
   const keterangan = document.getElementById('absen-keterangan').value.trim();
+  const angkatanTarget = [...document.querySelectorAll('.absen-angkatan-cb:checked')].map(x=>String(x.value));
+  if(!angkatanTarget.length){ toast('Pilih minimal satu angkatan yang boleh absen.'); return; }
   if(!tanggal || !jamMulai || !jamSelesai){ toast('Isi tanggal, jam mulai, dan jam tutup terlebih dahulu.'); return; }
   if(!keterangan){ toast('Isi keterangan/nama kegiatan terlebih dahulu.'); return; }
   const sesiBaru = {
-    id:uid(), tanggal, jamMulai, jamSelesai, keterangan,
+    id:uid(), tanggal, jamMulai, jamSelesai, keterangan, angkatanTarget,
     dibukaOleh:session.nama, waktuDibuka:new Date().toISOString(), alpaDiproses:false, ditutupManual:false
   };
   DB.absensiSesi.push(sesiBaru);
@@ -2808,8 +2880,43 @@ async function simpanUbahStatusAbsen(id){
 /* ================= ABSEN MANUAL — ADMIN & SEKRETARIS ================= */
 let ManualAbsenState = {sesiId:null, draft:{}};
 function isManualSesi(s){ return !!s && s.mode==='manual'; }
-function anggotaAktifUntukManual(){
-  return [...(DB.anggota||[])].filter(a=>a && (a.status==null || String(a.status).toLowerCase()!=='nonaktif')).sort((a,b)=>String(a.nama||'').localeCompare(String(b.nama||''),'id'));
+function daftarAngkatanManual(){
+  const vals=[...(DB.anggota||[])]
+    .filter(a=>a && (a.status==null || String(a.status).toLowerCase()!=='nonaktif'))
+    .map(a=>String(a.angkatan||'').trim())
+    .filter(Boolean);
+  return [...new Set(vals)].sort((a,b)=>{
+    const na=Number(a), nb=Number(b);
+    if(Number.isFinite(na)&&Number.isFinite(nb) && na!==nb) return nb-na;
+    return b.localeCompare(a,'id');
+  });
+}
+function anggotaAktifUntukManual(sesi){
+  const target=Array.isArray(sesi?.angkatanTarget) ? sesi.angkatanTarget.map(String).filter(Boolean) : [];
+  return [...(DB.anggota||[])]
+    .filter(a=>a && (a.status==null || String(a.status).toLowerCase()!=='nonaktif'))
+    .filter(a=>!target.length || target.includes(String(a.angkatan||'')))
+    .sort((a,b)=>{
+      const aa=String(a.angkatan||''), bb=String(b.angkatan||'');
+      const na=Number(aa), nb=Number(bb);
+      if(Number.isFinite(na)&&Number.isFinite(nb)&&na!==nb) return nb-na;
+      if(aa!==bb) return bb.localeCompare(aa,'id');
+      return String(a.nama||'').localeCompare(String(b.nama||''),'id');
+    });
+}
+function manualAngkatanPickerHtml(selected=[]){
+  const list=daftarAngkatanManual();
+  if(!list.length) return '<div class="hint-box">Belum ada data Angkatan pada anggota aktif.</div>';
+  return `<div class="field">
+    <label>Angkatan yang Boleh Diabsen</label>
+    <div style="font-size:11px;color:var(--muted);margin:4px 0 8px;">Pilih satu atau beberapa angkatan. Hanya anggota dari angkatan yang dipilih yang akan tampil pada Absen Manual dan masuk ke Daftar Hadir.</div>
+    <div style="display:flex;flex-wrap:wrap;gap:7px;">
+      ${list.map(x=>`<label style="display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:9px;padding:7px 9px;background:var(--card,#fff);font-size:11.5px;font-weight:800;cursor:pointer;">
+        <input type="checkbox" class="manual-angkatan-cb" value="${esc(x)}" ${selected.map(String).includes(String(x))?'checked':''}>
+        Angkatan ${esc(x)}
+      </label>`).join('')}
+    </div>
+  </div>`;
 }
 function renderAbsenManual(){
   if(!canManageAbsensi()){ document.getElementById('content').innerHTML='<div class="empty-state">⚠️ Hanya Admin dan Sekretaris yang boleh mengisi Absen Manual</div>'; return; }
@@ -2823,6 +2930,7 @@ function renderAbsenManual(){
         <div class="field"><label>Nama Kegiatan</label><input id="manual-kegiatan" placeholder="Contoh: Latihan Rutin"></div>
         <div class="field"><label>Tanggal / Bulan / Tahun</label><input id="manual-tanggal" type="date" value="${todayStr()}"></div>
         <div class="field"><label>Waktu Mulai</label><input id="manual-waktu" type="time" value="08:00"></div>
+        ${manualAngkatanPickerHtml()}
         <button class="btn-primary" style="width:100%;" onclick="mulaiAbsenManual()">▶ MULAI ABSEN</button>
       </div>
     `;
@@ -2833,15 +2941,18 @@ async function mulaiAbsenManual(){
   const kegiatan=(document.getElementById('manual-kegiatan')?.value||'').trim();
   const tanggal=document.getElementById('manual-tanggal')?.value||'';
   const waktu=document.getElementById('manual-waktu')?.value||'';
+  const angkatanTarget=[...document.querySelectorAll('.manual-angkatan-cb:checked')].map(x=>String(x.value));
   if(!kegiatan||!tanggal||!waktu){ toast('Lengkapi nama kegiatan, tanggal, dan waktu mulai.'); return; }
-  const sesi={id:uid(),mode:'manual',tanggal,jamMulai:waktu,jamSelesai:null,keterangan:kegiatan,dibukaOleh:session.nama,waktuDibuka:new Date().toISOString(),alpaDiproses:false,ditutupManual:true,locked:false,riwayatPerubahan:[]};
+  if(!angkatanTarget.length){ toast('Pilih minimal satu angkatan yang boleh diabsen.'); return; }
+  const sesi={id:uid(),mode:'manual',tanggal,jamMulai:waktu,jamSelesai:null,keterangan:kegiatan,angkatanTarget,
+    dibukaOleh:session.nama,waktuDibuka:new Date().toISOString(),alpaDiproses:false,ditutupManual:true,locked:false,riwayatPerubahan:[]};
   DB.absensiSesi=DB.absensiSesi||[]; DB.absensiSesi.push(sesi); await save('absensiSesi');
   ManualAbsenState={sesiId:sesi.id,draft:{}};
   renderManualSession(sesi);
 }
 function manualStatusList(){ return [['Hadir','✅ Hadir'],['Izin','📝 Izin'],['Sakit','🩺 Sakit'],['Alpa','❌ Alpa']]; }
 function manualDraftFor(sesi){
-  const members=anggotaAktifUntukManual();
+  const members=anggotaAktifUntukManual(sesi);
   const d=ManualAbsenState.draft||{};
   members.forEach(a=>{
     if(d[a.id]==null){ const old=DB.absensi.find(r=>r.sesiId===sesi.id&&r.anggotaId===a.id); d[a.id]=old?(old.status||'Alpa'):''; }
@@ -2850,20 +2961,34 @@ function manualDraftFor(sesi){
 }
 function renderManualSession(sesi){
   if(!sesi || !isManualSesi(sesi)) return renderAbsenManual();
-  const members=anggotaAktifUntukManual(), draft=manualDraftFor(sesi), locked=!!sesi.locked;
-  const rows=members.map((a,i)=>{
-    const val=draft[a.id]||'';
-    const buttons=manualStatusList().map(([v,label])=>`<button class="manual-status-btn ${val===v?'active':''}" ${locked?'disabled':''} onclick="setManualStatus('${sesi.id}','${a.id}','${v}')">${label}</button>`).join('');
-    return `<tr style="border-top:1px solid var(--line);"><td style="padding:8px;">${i+1}</td><td style="padding:8px;font-weight:700;">${esc(a.nama||'-')}</td><td style="padding:8px;">${esc(String(a.angkatan||'-'))}</td><td style="padding:8px;min-width:230px;"><div class="manual-status-grid">${buttons}</div></td><td style="padding:8px;">${val?absenStatusBadge(val):'<span style="color:var(--muted);">Belum dipilih</span>'}</td></tr>`;
+  const members=anggotaAktifUntukManual(sesi), draft=manualDraftFor(sesi), locked=!!sesi.locked;
+  const grouped={};
+  members.forEach(a=>{ const key=String(a.angkatan||'').trim()||'__belum__'; (grouped[key]||(grouped[key]=[])).push(a); });
+  const keys=Object.keys(grouped).sort((a,b)=>{
+    if(a==='__belum__') return 1; if(b==='__belum__') return -1;
+    const na=Number(a), nb=Number(b);
+    if(Number.isFinite(na)&&Number.isFinite(nb)&&na!==nb) return nb-na;
+    return b.localeCompare(a,'id');
+  });
+  const sections=keys.map(key=>{
+    const rows=grouped[key].sort((a,b)=>String(a.nama||'').localeCompare(String(b.nama||''),'id')).map((a,i)=>{
+      const val=draft[a.id]||'';
+      const buttons=manualStatusList().map(([v,label])=>`<button class="manual-status-btn ${val===v?'active':''}" ${locked?'disabled':''} onclick="setManualStatus('${sesi.id}','${a.id}','${v}')">${label}</button>`).join('');
+      return `<tr style="border-top:1px solid var(--line);"><td style="padding:8px;">${i+1}</td><td style="padding:8px;font-weight:700;">${esc(a.nama||'-')}</td><td style="padding:8px;min-width:230px;"><div class="manual-status-grid">${buttons}</div></td><td style="padding:8px;">${val?absenStatusBadge(val):'<span style="color:var(--muted);">Belum dipilih</span>'}</td></tr>`;
+    }).join('');
+    const title=key==='__belum__'?'⚠️ BELUM DIISI ANGKATAN':`📌 ANGKATAN ${esc(key)}`;
+    return `<div style="font-weight:900;font-size:12px;margin:12px 0 7px;">${title}</div>
+      <div class="card table-wrap" style="padding:0;"><table style="width:100%;border-collapse:collapse;font-size:11.5px;"><thead><tr style="background:var(--bg,#f4f6fa);"><th style="padding:9px 8px;">No</th><th style="padding:9px 8px;text-align:left;">Nama Lengkap</th><th style="padding:9px 8px;text-align:left;">Pilihan Status</th><th style="padding:9px 8px;text-align:left;">Status Kehadiran</th></tr></thead><tbody>${rows||'<tr><td colspan="4" class="empty-state">Belum ada data anggota.</td></tr>'}</tbody></table></div>`;
   }).join('');
   document.getElementById('kelola-absen-mode-content').innerHTML=`
     <div class="card">
       <div style="font-weight:800;font-size:13px;">📝 ${esc(sesi.keterangan||'-')}</div>
       <div style="font-size:11.5px;color:var(--muted);margin-top:4px;">📅 ${fmtDate(sesi.tanggal)} · 🕒 ${esc(sesi.jamMulai||'-')} · Dibuat oleh ${esc(sesi.dibukaOleh||'-')}</div>
+      <div style="font-size:11.5px;margin-top:6px;font-weight:800;">👥 Target: ${labelAngkatanTarget(sesi)}</div>
       ${locked?'<div class="manual-locked">🔒 Absensi sudah terkunci. Status tidak dapat diubah.</div>':''}
     </div>
-    <div class="section-title">Daftar Hadir</div>
-    <div class="card table-wrap" style="padding:0;"><table style="width:100%;border-collapse:collapse;font-size:11.5px;"><thead><tr style="background:var(--bg,#f4f6fa);"><th style="padding:9px 8px;">No</th><th style="padding:9px 8px;text-align:left;">Nama Lengkap</th><th style="padding:9px 8px;text-align:left;">Angkatan</th><th style="padding:9px 8px;text-align:left;">Pilihan Status</th><th style="padding:9px 8px;text-align:left;">Status Kehadiran</th></tr></thead><tbody>${rows||'<tr><td colspan="5" class="empty-state">Belum ada data anggota.</td></tr>'}</tbody></table></div>
+    <div class="section-title">Daftar Hadir — Hanya Angkatan Terpilih</div>
+    ${sections||'<div class="empty-state">Belum ada anggota dari angkatan yang dipilih.</div>'}
     ${locked ? `<button class="btn-outline" style="width:100%;margin-top:10px;" onclick="bukaKunciAbsenManual('${sesi.id}')">🔓 BUKA KEMBALI ABSEN</button>` : `<button class="btn-primary" style="width:100%;margin-top:10px;" onclick="selesaiSimpanAbsenManual('${sesi.id}')">✅ SELESAI & SIMPAN ABSEN</button>`}
   `;
 }
@@ -2939,15 +3064,18 @@ function exportAbsensiCSV(sesiId){
   URL.revokeObjectURL(url);
 }
 function printAbsensi(tableId){
-  const table = document.getElementById(tableId || 'absen-table');
-  if(!table){ toast('Tidak ada data untuk dicetak.'); return; }
+  const base = tableId || 'absen-table';
+  const tables = [...document.querySelectorAll(`table[id^="${base}-"]`)];
+  const table = document.getElementById(base);
+  const html = tables.length ? tables.map(t=>`<div style="margin-bottom:18px;">${t.outerHTML}</div>`).join('') : (table ? table.outerHTML : '');
+  if(!html){ toast('Tidak ada data untuk dicetak.'); return; }
   const win = window.open('', '_blank');
   if(!win){ toast('Izinkan pop-up untuk mencetak.'); return; }
   win.document.write(`<html><head><title>Daftar Absensi</title></head>
     <body style="font-family:Arial,sans-serif;padding:24px;">
       <h3 style="text-align:center;">Daftar Absensi — ${esc(DB.settings.namaOrg||'PRASBHARAKU.ID')}</h3>
       <style>table{width:100%;border-collapse:collapse;font-size:12px;}th,td{border:1px solid #ccc;padding:6px 8px;text-align:left;}th{background:#f0f0f0;}</style>
-      ${table.outerHTML}
+      ${html}
       <script>window.onload=function(){window.print();}<\/script>
     </body></html>`);
   win.document.close();
@@ -4529,8 +4657,27 @@ function cleanupChatBar(){
 
 
 /* ---------------- ADMIN: Kelola Anggota ---------------- */
+function agamaRekapHtml(){
+  const anggota = Array.isArray(DB.anggota) ? DB.anggota : [];
+  const total = anggota.length;
+  const items = [
+    ['Islam','🕌'],['Kristen Protestan','✝️'],['Katolik','✝️'],
+    ['Hindu','🕉️'],['Budha','🔯'],['Khonghucu','🔯'],['Lainnya','⭐']
+  ];
+  const rows = items.map(([agama,ic])=>{
+    const jumlah = anggota.filter(a=>String(a.agama||'').trim()===agama).length;
+    const pct = total ? Math.round((jumlah/total)*100) : 0;
+    const label = agama==='Kristen Protestan' ? 'KRISTEN' : agama==='Khonghucu' ? 'KHONGHUCU' : agama.toUpperCase();
+    return `<div style="display:grid;grid-template-columns:1fr 70px 45px;gap:6px;align-items:center;padding:7px 0;border-top:1px solid var(--line);font-size:11.5px;">
+      <div style="font-weight:700;">${ic} ${label}</div><div style="text-align:right;font-weight:800;">${jumlah} orang</div><div style="text-align:right;color:var(--muted);">${pct}%</div>
+    </div>`;
+  }).join('');
+  return `<div class="card" style="margin-bottom:12px;"><div class="section-title" style="margin:0 0 8px;">📊 REKAPITULASI ANGGOTA</div>
+    <div style="font-size:12px;font-weight:700;margin-bottom:6px;">Jumlah Total: ${total} Orang</div>${rows}</div>`;
+}
 function renderAdminAnggota(){
   document.getElementById('content').innerHTML = `
+    ${agamaRekapHtml()}
     <div class="search-bar"><input id="admanggota-search" placeholder="Cari anggota…" oninput="renderAdminAnggotaList()"></div>
     <div class="card" id="admanggota-list"></div>
   `;
@@ -4549,7 +4696,7 @@ function renderAdminAnggotaList(){
     </div>`).join('') || '<div class="empty-state">Belum ada data anggota.</div>';
 }
 function anggotaFormHtml(a, selfEdit){
-  a = a || {nama:'',gender:'Laki-laki',kategori:'Pelajar',kelas:'',alamat:'',sekolah:'',universitas:'',tglLahir:'',namaOrtu:'',alamatOrtu:'',noWaOrtu:'',krida:KRIDA_LIST[0].key,angkatan:getAngkatanList()[0],jabatan:'Anggota Biasa',status:'Aktif',foto:null};
+  a = a || {nama:'',gender:'Laki-laki',kategori:'Pelajar',kelas:'',alamat:'',sekolah:'',universitas:'',tglLahir:'',namaOrtu:'',alamatOrtu:'',noWaOrtu:'',krida:KRIDA_LIST[0].key,angkatan:getAngkatanList()[0],jabatan:'Anggota Biasa',agama:'',status:'Aktif',foto:null};
   window._formFotoValue = a.foto || null;
   const kat = a.kategori || 'Pelajar';
   const sekolahOpts = ['SMKS PUNGGAWA MALOLO','UPTD SMAN 1 KALUKKU','UPTD SMAN 2 KALUKKU','UPTD SMAN 3 KALUKKU','UPTD SMKN SULBAR','UPTD SMKN BUDI MULYA','MA ALIYAH LOMBANG'];
@@ -4595,9 +4742,35 @@ function anggotaFormHtml(a, selfEdit){
     <div class="field"><label>No. WhatsApp/Telp Orang Tua</label><input id="f-nowa-ortu" value="${esc(a.noWaOrtu||'')}" placeholder="Contoh: 0812xxxxxxx"></div>
     <div class="field"><label>Krida</label>${a.jabatan==='Pembina' ? `<input value="-" disabled style="opacity:.65;">` : `<select id="f-krida">${KRIDA_LIST.map(k=>`<option ${k.key===a.krida?'selected':''}>${k.key}</option>`).join('')}</select>`}</div>
     <div class="field"><label>Angkatan</label><select id="f-angkatan">${getAngkatanList().map(n=>`<option value="${n}" ${n===a.angkatan?'selected':''}>Angkatan ${n} (${tahunMasukAngkatan(n)})</option>`).join('')}</select></div>
-    ${selfEdit ? '' : `
+    ${selfEdit ? `
+    <div class="field"><label>Jabatan</label><input value="${esc(a.jabatan||'Anggota Biasa')}" disabled style="opacity:.65;"></div>
+    <div class="field"><label>Agama</label>
+      <select id="f-agama">
+        <option value="" ${!a.agama?'selected':''}>▼ Pilih Agama</option>
+        <option value="Islam" ${a.agama==='Islam'?'selected':''}>Islam</option>
+        <option value="Kristen Protestan" ${a.agama==='Kristen Protestan'?'selected':''}>Kristen Protestan</option>
+        <option value="Katolik" ${a.agama==='Katolik'?'selected':''}>Katolik</option>
+        <option value="Hindu" ${a.agama==='Hindu'?'selected':''}>Hindu</option>
+        <option value="Budha" ${a.agama==='Budha'?'selected':''}>Budha</option>
+        <option value="Khonghucu" ${a.agama==='Khonghucu'?'selected':''}>Khonghucu</option>
+        <option value="Lainnya" ${a.agama==='Lainnya'?'selected':''}>Lainnya</option>
+      </select>
+    </div>
+    ` : `
     <div class="field"><label>Jabatan <span style="font-weight:400;color:var(--muted);">(khusus wewenang Pembina)</span></label>
       <select id="f-jabatan">${JABATAN_LIST.map(j=>`<option ${j===(a.jabatan||'Anggota Biasa')?'selected':''}>${j}</option>`).join('')}</select>
+    </div>
+    <div class="field"><label>Agama</label>
+      <select id="f-agama">
+        <option value="" ${!a.agama?'selected':''}>▼ Pilih Agama</option>
+        <option value="Islam" ${a.agama==='Islam'?'selected':''}>Islam</option>
+        <option value="Kristen Protestan" ${a.agama==='Kristen Protestan'?'selected':''}>Kristen Protestan</option>
+        <option value="Katolik" ${a.agama==='Katolik'?'selected':''}>Katolik</option>
+        <option value="Hindu" ${a.agama==='Hindu'?'selected':''}>Hindu</option>
+        <option value="Budha" ${a.agama==='Budha'?'selected':''}>Budha</option>
+        <option value="Khonghucu" ${a.agama==='Khonghucu'?'selected':''}>Khonghucu</option>
+        <option value="Lainnya" ${a.agama==='Lainnya'?'selected':''}>Lainnya</option>
+      </select>
     </div>
     <div class="field"><label>Status</label><select id="f-status"><option ${a.status==='Aktif'?'selected':''}>Aktif</option><option ${a.status==='Menunggu Persetujuan'?'selected':''}>Menunggu Persetujuan</option><option ${a.status==='Nonaktif'?'selected':''}>Nonaktif</option></select></div>
     ${accountFieldsHtml(a)}`}
@@ -4674,6 +4847,7 @@ function readAnggotaForm(){
     krida: document.getElementById('f-krida') ? document.getElementById('f-krida').value : '-',
     angkatan: document.getElementById('f-angkatan') ? Number(document.getElementById('f-angkatan').value) : undefined,
     jabatan: document.getElementById('f-jabatan') ? document.getElementById('f-jabatan').value : undefined,
+    agama: document.getElementById('f-agama') ? document.getElementById('f-agama').value : undefined,
     status: document.getElementById('f-status') ? document.getElementById('f-status').value : undefined,
     foto: window._formFotoValue !== undefined ? window._formFotoValue : null,
     username: document.getElementById('f-username') ? document.getElementById('f-username').value.trim() : undefined,
