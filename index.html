@@ -361,10 +361,35 @@
   .ekta-riwayat-item .aksi{font-weight:700;}
   .ekta-riwayat-item .meta{color:var(--muted);font-size:10.5px;margin-top:2px;}
   .ekta-hint{font-size:11px;color:var(--muted);text-align:center;margin-top:10px;}
-  .ekta-fullscreen-overlay{position:fixed;inset:0;background:rgba(6,10,22,.85);z-index:90;display:none;align-items:center;justify-content:center;padding:24px;}
+  /* Fullscreen e-KTA: kartu selalu menyesuaikan layar, bukan dipaksa 856px. */
+  .ekta-fullscreen-overlay{position:fixed;inset:0;background:rgba(6,10,22,.88);z-index:90;display:none;align-items:center;justify-content:center;padding:12px;box-sizing:border-box;overflow:hidden;}
   .ekta-fullscreen-overlay.show{display:flex;}
+  /* Container fullscreen dibuat 100% viewport agar kartu tidak melebar keluar layar HP. */
+  #ekta-fs-content{width:100%;height:100%;min-width:0;min-height:0;display:flex;box-sizing:border-box;overflow:hidden;}
+  .ekta-fs-inner{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-width:0;min-height:0;box-sizing:border-box;overflow:hidden;}
+  .ekta-fs-tabs{width:100%;max-width:856px;display:flex;gap:8px;flex:0 0 auto;min-width:0;box-sizing:border-box;}
+  .ekta-fs-tabs .ekta-page-tab{min-width:0;}
+  .ekta-fs-card-area{width:100%;flex:1 1 auto;display:flex;align-items:center;justify-content:center;min-width:0;min-height:0;overflow:hidden;box-sizing:border-box;}
+  .ekta-fs-card-area .ekta-scaler{box-shadow:0 10px 28px rgba(0,0,0,.38);flex:0 0 auto;}
   .ekta-fullscreen-overlay .ekta-pro{width:100%;max-width:360px;}
-  .ekta-close-fs{position:absolute;top:18px;right:18px;width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.15);color:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;z-index:91;}
+  .ekta-close-fs{position:absolute;top:10px;right:10px;width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.18);color:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;z-index:91;}
+  @media (max-width:600px){
+    .ekta-fullscreen-overlay{padding:8px;}
+    .ekta-fs-inner{gap:8px;}
+    .ekta-fs-tabs{gap:6px;}
+    .ekta-fs-tabs .ekta-page-tab{padding:8px 7px;font-size:11px;border-radius:10px;}
+  }
+  @media (max-width:480px) and (orientation:portrait){
+    .ekta-fullscreen-overlay{padding:6px;}
+    .ekta-fs-inner{gap:7px;}
+    .ekta-fs-card-area{width:100%;flex:1 1 auto;}
+  }
+
+  @media (max-height:500px) and (orientation:landscape){
+    .ekta-fullscreen-overlay{padding:6px;}
+    .ekta-fs-inner{gap:5px;}
+    .ekta-fs-tabs .ekta-page-tab{padding:6px 7px;font-size:10px;}
+  }
 
   /* ---------- Kartu e-KTA versi cetak (dipakai untuk Unduh PDF / Simpan Gambar) ---------- */
   .profile-ekta-actions{display:flex;gap:10px;margin-top:10px;}
@@ -2563,8 +2588,6 @@ function ektaFitCard(scalerId){
 function ektaFitAll(){
   document.querySelectorAll('.ekta-scaler').forEach(w=>ektaFitCard(w.id));
 }
-window.addEventListener('resize', ektaFitAll);
-
 function renderEktaQr(elId, code){
   const el = document.getElementById(elId);
   if(!el || !code) return;
@@ -2576,25 +2599,53 @@ function renderEktaQr(elId, code){
     new QRCode(el, {text:code, width:qrSize, height:qrSize, correctLevel:QRCode.CorrectLevel.M});
   }catch(e){ el.textContent='QR'; }
 }
+function fitEktaFullscreen(){
+  const overlay=document.getElementById('ekta-fs-overlay');
+  const area=overlay?.querySelector('.ekta-fs-card-area');
+  const scaler=area?.querySelector('.ekta-scaler');
+  const card=scaler?.querySelector('.ekta-ref-card');
+  if(!overlay||!area||!scaler||!card) return;
+
+  // Ukuran area sudah mengikuti viewport. Kartu ID-1 (856x540) diperkecil
+  // secara proporsional sehingga seluruh kartu selalu terlihat di HP.
+  const aw=Math.max(1, area.clientWidth-4);
+  const ah=Math.max(1, area.clientHeight-4);
+  const scale=Math.min(1, aw/856, ah/540);
+  const w=Math.max(1, Math.round(856*scale));
+  const h=Math.max(1, Math.round(540*scale));
+
+  scaler.style.width=w+'px';
+  scaler.style.maxWidth=w+'px';
+  scaler.style.height=h+'px';
+  scaler.style.flex='0 0 '+w+'px';
+
+  card.style.width='856px';
+  card.style.height='540px';
+  card.style.maxWidth='none';
+  card.style.transformOrigin='top left';
+  card.style.transform='scale('+scale+')';
+}
 function openEktaFullscreen(id, side='front'){
   const a = DB.anggota.find(x=>x.id===id); if(!a) return;
   const isBack = side==='back';
   document.getElementById('ekta-fs-content').innerHTML = `
-    <div style="width:100%;max-width:856px;margin:0 auto;overflow:visible;box-sizing:border-box;">
-      <div style="display:flex;gap:8px;margin:0 auto 12px;max-width:856px;">
+    <div class="ekta-fs-inner">
+      <div class="ekta-fs-tabs">
         <button type="button" class="ekta-page-tab ${!isBack?'active':''}" onclick="openEktaFullscreen('${a.id}','front')">🪪 Halaman Depan</button>
         <button type="button" class="ekta-page-tab ${isBack?'active':''}" onclick="openEktaFullscreen('${a.id}','back')">📄 Halaman Belakang</button>
       </div>
-      ${isBack
-        ? `<div class="ekta-scaler" id="ekta-fs-back-scaler-${a.id}"><div class="ekta-ref-card ekta-ref-back" style="--ekta-back-bg:url(${EKTA_BACK_BG_DATA_URL});"></div></div>`
-        : ektaCardHtml(a, true)}
+      <div class="ekta-fs-card-area">
+        ${isBack
+          ? `<div class="ekta-scaler" id="ekta-fs-back-scaler-${a.id}"><div class="ekta-ref-card ekta-ref-back" style="--ekta-back-bg:url(${EKTA_BACK_BG_DATA_URL});"></div></div>`
+          : ektaCardHtml(a, true)}
+      </div>
     </div>`;
   document.getElementById('ekta-fs-overlay').classList.add('show');
   if(!isBack && ektaHasBeenIssued(a)) renderEktaQr('fs-ektaqr-'+a.id, memberCode(a));
-  if(isBack) ektaFitCard('ekta-fs-back-scaler-'+a.id);
-  else ektaFitCard('ekta-scaler-fs-'+a.id);
+  requestAnimationFrame(()=>requestAnimationFrame(fitEktaFullscreen));
 }
 function closeEktaFullscreen(){ document.getElementById('ekta-fs-overlay').classList.remove('show'); }
+window.addEventListener('resize', ()=>{ ektaFitAll(); fitEktaFullscreen(); });
 
 /* ---------------- Cetak e-KTA: Unduh PDF / Simpan sebagai Gambar ---------------- */
 function ektaMasaBerlaku(a){
@@ -2644,15 +2695,31 @@ async function captureEktaCardSide(a, side){
   await ensureEktaExportLibs();
   const holder = document.createElement('div');
   holder.style.cssText = 'position:fixed;left:-99999px;top:0;pointer-events:none;';
-  holder.innerHTML = side==='front' ? ektaPrintFrontHtml(a) : ektaPrintBackHtml(a);
+
+  /* PENTING:
+     Sisi DEPAN PDF sekarang memakai kartu yang SAMA PERSIS dengan
+     menu "e-KTA Digital", bukan layout cetak terpisah. Dengan begitu
+     posisi nama, nomor, angkatan, jabatan, krida, masa berlaku, foto,
+     QR, dan latar belakang mengikuti tampilan digital. */
+  holder.innerHTML = side==='front'
+    ? ektaCardHtml(a, false)
+    : ektaPrintBackHtml(a);
   document.body.appendChild(holder);
   try{
     if(side==='front'){
-      renderEktaQr('print-ektaqr-'+a.id, memberCode(a));
-      await new Promise(r=>setTimeout(r,80)); // beri waktu QR & foto untuk render
+      renderEktaQr('ektaqr-'+a.id, memberCode(a));
+      await new Promise(r=>setTimeout(r,120));
     }
-    const cardEl = document.getElementById('ekta-print-'+side+'-'+a.id);
-    const canvas = await html2canvas(cardEl, {scale:4, backgroundColor:null, useCORS:true, imageTimeout:15000, logging:false});
+    const cardEl = side==='front'
+      ? holder.querySelector('.ekta-ref-card.ekta-ref-front')
+      : document.getElementById('ekta-print-back-'+a.id);
+    const canvas = await html2canvas(cardEl, {
+      scale:4,
+      backgroundColor:null,
+      useCORS:true,
+      imageTimeout:15000,
+      logging:false
+    });
     return canvas;
   } finally {
     document.body.removeChild(holder);
