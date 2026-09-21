@@ -272,6 +272,15 @@
   .ekta-meta{font-size:10.5px;color:#c9d3ea;margin-top:2px;}
   .ekta-num{margin-top:14px;font-size:11px;letter-spacing:2px;color:var(--gold2);font-family:monospace;}
 
+  /* ---------- Foto Profil Fullscreen: lihat & zoom tanpa tombol unduh ---------- */
+  .profile-image-overlay{position:fixed;inset:0;background:rgba(0,0,0,.94);z-index:120;display:none;align-items:center;justify-content:center;overflow:hidden;touch-action:none;}
+  .profile-image-overlay.show{display:flex;}
+  .profile-image-stage{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;overflow:hidden;touch-action:none;}
+  #profile-image-viewer{max-width:92vw;max-height:88vh;width:auto;height:auto;object-fit:contain;display:block;border-radius:8px;user-select:none;-webkit-user-drag:none;will-change:transform;transform-origin:center center;touch-action:none;cursor:grab;}
+  #profile-image-viewer.dragging{cursor:grabbing;}
+  .profile-image-close{position:absolute;top:12px;right:12px;z-index:122;width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.16);color:#fff;font-size:19px;font-weight:700;display:flex;align-items:center;justify-content:center;border:1px solid rgba(255,255,255,.24);backdrop-filter:blur(4px);}
+  @media(max-width:600px){#profile-image-viewer{max-width:94vw;max-height:86vh;border-radius:6px;}.profile-image-close{top:10px;right:10px;width:38px;height:38px;}}
+
   /* Forms / modals */
   .fab{position:fixed;right:calc(50% - (var(--app-max) / 2) + 20px);bottom:90px;width:52px;height:52px;border-radius:50%;background:var(--navy);color:#fff;font-size:24px;display:flex;align-items:center;justify-content:center;box-shadow:0 8px 20px rgba(11,31,58,.4);z-index:35;}
   #modal-overlay{position:fixed;inset:0;background:rgba(10,15,30,.55);z-index:60;display:none;align-items:flex-end;justify-content:center;}
@@ -857,6 +866,12 @@
     <div class="ekta-close-fs" onclick="closeEktaFullscreen()">✕</div>
     <div id="ekta-fs-content"></div>
   </div>
+  <div class="profile-image-overlay" id="profile-image-overlay" onclick="if(event.target===this)closeProfileImageFullscreen()">
+    <button class="profile-image-close" type="button" onclick="closeProfileImageFullscreen()" aria-label="Tutup">✕</button>
+    <div class="profile-image-stage" id="profile-image-stage">
+      <img id="profile-image-viewer" alt="Foto profil" draggable="false">
+    </div>
+  </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
@@ -1146,7 +1161,7 @@ function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(
 function avatarHtml(entity, sizePx){
   entity = entity || {};
   if(entity.foto){
-    return `<img class="avatar-img" src="${entity.foto}" style="width:${sizePx}px;height:${sizePx}px;cursor:pointer;object-fit:cover;" onclick="event.stopPropagation();openImageFullscreen('${esc(entity.foto)}')">`;
+    return `<img class="avatar-img" src="${entity.foto}" style="width:${sizePx}px;height:${sizePx}px;cursor:pointer;object-fit:cover;" onclick="event.stopPropagation();openProfileImageFullscreen('${esc(entity.foto)}')">`;
   }
   if(entity.gender==='Laki-laki' || entity.gender==='Perempuan'){
     const cls = entity.gender==='Perempuan' ? 'gender-P' : 'gender-L';
@@ -1703,6 +1718,7 @@ function buildDrawer(){
     ['keluarga','👨‍👩‍👧‍👦','Keluarga Besar'],
     ['anggota','👥','Data Keanggotaan'],
     ['ekta','🪪','e-KTA Digital'],
+    ['qr','🔍','QR'],
     ['absen','📷','Absen Saya'],
     ['daftar-hadir','📋','Daftar Hadir'],
     ['krida','🛡️','4 Krida'],
@@ -1848,6 +1864,7 @@ window.addEventListener('popstate', ()=>{
 
 function navigate(view, opts){
   opts = opts || {};
+  if(currentView==='qr' && view!=='qr') stopQRScanner();
   currentView = view;
   closeDrawer();
   if(!opts.silent){
@@ -1862,7 +1879,7 @@ function navigate(view, opts){
   document.querySelector('main').scrollTop=0;
   window.scrollTo(0,0);
   const map = {
-    dashboard:renderDashboard, profil:renderProfil, anggota:renderAnggotaList, ekta:renderEkta,
+    dashboard:renderDashboard, profil:renderProfil, anggota:renderAnggotaList, ekta:renderEkta, qr:renderQRScanner,
     krida:renderKrida, berita:renderBerita, galeri:renderGaleri, jadwal:renderJadwal, chat:renderChat,
     absen:renderAbsenSaya, akun:renderUbahSandi, keluarga:renderKeluargaBesar, 'daftar-hadir':renderDaftarHadir,
     'admin-anggota':renderAdminAnggota, 'admin-berita':renderAdminBerita, 'admin-galeri':renderAdminGaleri,
@@ -2306,7 +2323,7 @@ function filterAnggotaList(){
 }
 function showAnggotaDetail(id){
   const a = DB.anggota.find(x=>x.id===id); if(!a) return;
-  const fotoHtml=a.foto ? `<div style="display:flex;justify-content:center;margin-bottom:12px;"><img src="${esc(a.foto)}" onclick="openImageFullscreen('${esc(a.foto)}')" style="width:120px;height:120px;border-radius:50%;object-fit:cover;cursor:pointer;border:3px solid var(--line);"></div>` : `<div style="display:flex;justify-content:center;margin-bottom:12px;">${avatarHtml(a,120)}</div>`;
+  const fotoHtml=a.foto ? `<div style="display:flex;justify-content:center;margin-bottom:12px;"><img src="${esc(a.foto)}" onclick="openProfileImageFullscreen('${esc(a.foto)}')" style="width:120px;height:120px;border-radius:50%;object-fit:cover;cursor:pointer;border:3px solid var(--line);"></div>` : `<div style="display:flex;justify-content:center;margin-bottom:12px;">${avatarHtml(a,120)}</div>`;
   const u = DB.users.find(x=>x.anggotaId===a.id);
   const online = u ? isOnlineFromMap(u.username, window._kbPresence||{}) : false;
   openModal(a.nama, `
@@ -3008,6 +3025,42 @@ function absenStatusBadge(status){
   return `<span class="role-pill" style="background:${s.bg};color:${s.c};">${s.ic} ${esc(status||'Hadir')}</span>`;
 }
 
+/* ---------------- QR e-KTA — semua akun ---------------- */
+let qrScannerInstance=null,qrScannerRunning=false,qrLastResult='',qrLastResultAt=0;
+function qrFindEntity(raw){
+  const code=String(raw||'').trim(),anggota=Array.isArray(DB.anggota)?DB.anggota:[],users=Array.isArray(DB.users)?DB.users:[];let a=null;
+  if(/^PRSB-/i.test(code)){const id=code.replace(/^PRSB-/i,'');a=anggota.find(x=>String(x.id||'').toUpperCase()===id.toUpperCase())||null;}
+  else if(/^PB-/i.test(code)){const key=code.replace(/^PB-/i,'');const u=users.find(x=>x.role==='pembina'&&String(x.username||'').toUpperCase()===key.toUpperCase());if(u)a=pembinaEktaEntity(u);}
+  else{a=anggota.find(x=>String(x.noKta||'').toUpperCase()===code.toUpperCase())||null;if(!a){const u=users.find(x=>x.role==='pembina'&&String(x.nip||'').toUpperCase()===code.toUpperCase());if(u)a=pembinaEktaEntity(u);}}
+  return a;
+}
+function qrVerifyResult(raw){
+  const code=String(raw||'').trim(),a=qrFindEntity(code),box=document.getElementById('qr-result');if(!box)return;
+  if(!a){box.innerHTML=`<div class="scan-status scan-err">❌ QR TIDAK DITEMUKAN<div style="font-size:11px;font-weight:500;color:var(--muted);margin-top:5px;">Kode: ${esc(code||'-')}</div></div>`;return;}
+  const st=ektaStatusInfo(a),ok=st.code==='BERLAKU',icon=ok?'✅':'⚠️';
+  const detail=ok?`KTA masih aktif${a.ektaTglBerakhir?` sampai ${fmtDate(a.ektaTglBerakhir)}`:''}.`:`Status e-KTA: ${esc(st.label)}.`;
+  box.innerHTML=`<div class="scan-status ${ok?'scan-ok':'scan-err'}">${icon} QR TERDAFTAR<div style="font-size:15px;color:var(--text);margin-top:7px;font-weight:800;">${esc(a.nama||'-')}</div><div style="font-size:11.5px;color:var(--muted);margin-top:3px;">${esc(a.noKta||'-')}</div><div style="font-size:12px;margin-top:7px;">${detail}</div><div style="margin-top:8px;">${ektaStatusChipHtml(a,true)}</div></div>`;
+}
+async function stopQRScanner(){
+  if(qrScannerInstance){try{if(qrScannerRunning)await qrScannerInstance.stop();}catch(e){}try{await qrScannerInstance.clear();}catch(e){}}
+  qrScannerInstance=null;qrScannerRunning=false;
+}
+async function startQRScanner(){
+  const reader=document.getElementById('qr-reader');if(!reader)return;await stopQRScanner();reader.innerHTML='';
+  try{
+    if(typeof Html5Qrcode==='undefined')throw new Error('Scanner QR belum tersedia.');
+    qrScannerInstance=new Html5Qrcode('qr-reader');
+    const onScan=t=>{const now=Date.now();if(t===qrLastResult&&now-qrLastResultAt<1500)return;qrLastResult=t;qrLastResultAt=now;qrVerifyResult(t);};
+    const config={fps:10,qrbox:{width:240,height:240},aspectRatio:1};
+    try{await qrScannerInstance.start({facingMode:{exact:'environment'}},config,onScan,()=>{});}catch(e){await qrScannerInstance.start({facingMode:'environment'},config,onScan,()=>{});}
+    qrScannerRunning=true;
+  }catch(e){reader.innerHTML='<div class="empty-state" style="color:#fff;background:#111;border-radius:12px;padding:28px 12px;">⚠️ Kamera tidak dapat digunakan. Pastikan izin kamera diberikan pada browser.</div>';}
+}
+function renderQRScanner(){
+  stopQRScanner();
+  document.getElementById('content').innerHTML=`<div class="section-title">🔍 Verifikasi QR e-KTA</div><div class="card"><div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:10px;">Arahkan kamera ke QR pada e-KTA. Menu ini dapat digunakan oleh semua akun.</div><div class="scan-wrap"><div id="qr-reader"></div></div><div style="font-size:10.5px;color:var(--muted);text-align:center;margin-top:8px;">Izinkan akses kamera jika diminta browser.</div><div id="qr-result"></div><button class="btn-outline" style="width:100%;margin-top:10px;" onclick="startQRScanner()">🔄 Mulai / Ulangi Scan</button></div>`;
+  startQRScanner();
+}
 /* ---------------- Absen Saya (anggota mengisi status kehadiran) ---------------- */
 function grafikAbsenSayaHtml(riwayat){
   const total = riwayat.length;
@@ -3989,28 +4042,53 @@ function renderGaleri(){
 }
 function openImageFullscreen(src){
   document.getElementById('ekta-fs-content').innerHTML = `
-    <img src="${esc(src)}" style="max-width:100%;max-height:80vh;border-radius:10px;display:block;">
-    <button class="btn-primary" style="display:block;width:100%;margin-top:10px;" onclick="downloadRemoteImage('${esc(src)}')">⬇ Unduh Foto</button>
+    <img src="${esc(src)}" style="max-width:94vw;max-height:88vh;border-radius:10px;display:block;object-fit:contain;">
   `;
   document.getElementById('ekta-fs-overlay').classList.add('show');
 }
-// Unduh gambar walau berasal dari domain lain (mis. Supabase Storage) —
-// atribut `download` biasa tidak selalu berfungsi untuk file lintas-domain,
-// jadi diambil sebagai blob dulu baru diunduh.
-async function downloadRemoteImage(url){
-  try{
-    const res = await fetch(url);
-    const blob = await res.blob();
-    const objUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = objUrl; a.download = 'foto_'+Date.now()+'.jpg';
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    URL.revokeObjectURL(objUrl);
-  }catch(e){
-    window.open(url, '_blank');
-  }
+function openProfileImageFullscreen(src){
+  const overlay=document.getElementById('profile-image-overlay'), img=document.getElementById('profile-image-viewer');
+  if(!overlay||!img||!src) return;
+  profileZoomReset(); img.src=src; overlay.classList.add('show'); document.body.style.overflow='hidden';
 }
-
+function closeProfileImageFullscreen(){
+  const overlay=document.getElementById('profile-image-overlay'), img=document.getElementById('profile-image-viewer');
+  if(!overlay) return;
+  overlay.classList.remove('show'); if(img) img.src=''; document.body.style.overflow=''; profileZoomReset();
+}
+let profileZoom=1, profilePanX=0, profilePanY=0, profilePointers=new Map();
+let profilePinchStartDist=0, profilePinchStartZoom=1, profileDragStartX=0, profileDragStartY=0;
+let profilePanStartX=0, profilePanStartY=0, profileLastTap=0;
+function profileClampZoom(v){return Math.max(1,Math.min(5,v));}
+function profileApplyTransform(){const img=document.getElementById('profile-image-viewer');if(img)img.style.transform=`translate3d(${profilePanX}px,${profilePanY}px,0) scale(${profileZoom})`;}
+function profileZoomReset(){profileZoom=1;profilePanX=0;profilePanY=0;profilePointers.clear();profilePinchStartDist=0;profileApplyTransform();}
+function profileSetZoom(next,cx,cy){
+  const old=profileZoom,z=profileClampZoom(next); if(z===old)return;
+  if(cx!=null&&cy!=null){const r=z/old;profilePanX=cx-(cx-profilePanX)*r;profilePanY=cy-(cy-profilePanY)*r;}
+  profileZoom=z;if(z===1){profilePanX=0;profilePanY=0;}profileApplyTransform();
+}
+function profileDist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+function profilePointerDown(e){
+  const img=document.getElementById('profile-image-viewer');if(!img)return;
+  profilePointers.set(e.pointerId,{x:e.clientX,y:e.clientY});try{img.setPointerCapture(e.pointerId);}catch(_){}
+  if(profilePointers.size===1){
+    profileDragStartX=e.clientX;profileDragStartY=e.clientY;profilePanStartX=profilePanX;profilePanStartY=profilePanY;img.classList.add('dragging');
+    const now=Date.now();if(now-profileLastTap<300){const r=img.getBoundingClientRect();profileSetZoom(profileZoom>1?1:2,e.clientX-(r.left+r.width/2),e.clientY-(r.top+r.height/2));}profileLastTap=now;
+  }else if(profilePointers.size===2){const p=[...profilePointers.values()];profilePinchStartDist=profileDist(p[0],p[1]);profilePinchStartZoom=profileZoom;}
+}
+function profilePointerMove(e){
+  const img=document.getElementById('profile-image-viewer');if(!img||!profilePointers.has(e.pointerId))return;
+  profilePointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(profilePointers.size===2){const p=[...profilePointers.values()],d=profileDist(p[0],p[1]);if(profilePinchStartDist)profileZoom=profileClampZoom(profilePinchStartZoom*d/profilePinchStartDist);if(profileZoom===1){profilePanX=0;profilePanY=0;}profileApplyTransform();}
+  else if(profilePointers.size===1&&profileZoom>1){profilePanX=profilePanStartX+e.clientX-profileDragStartX;profilePanY=profilePanStartY+e.clientY-profileDragStartY;profileApplyTransform();}
+}
+function profilePointerUp(e){const img=document.getElementById('profile-image-viewer');profilePointers.delete(e.pointerId);if(profilePointers.size<2)profilePinchStartDist=0;if(profilePointers.size===0)img?.classList.remove('dragging');}
+function profileWheel(e){e.preventDefault();const r=e.currentTarget.getBoundingClientRect();profileSetZoom(profileZoom+(e.deltaY<0?.35:-.35),e.clientX-(r.left+r.width/2),e.clientY-(r.top+r.height/2));}
+document.addEventListener('DOMContentLoaded',()=>{
+  const img=document.getElementById('profile-image-viewer');if(!img)return;
+  img.addEventListener('pointerdown',profilePointerDown);img.addEventListener('pointermove',profilePointerMove);
+  img.addEventListener('pointerup',profilePointerUp);img.addEventListener('pointercancel',profilePointerUp);img.addEventListener('wheel',profileWheel,{passive:false});
+});
 /* ---------------- Galeri Anggota (kirim foto + persetujuan admin) ---------------- */
 const GALERI_ANGGOTA_BUCKET = 'galeri-anggota';
 window._gaFiles = [];
