@@ -537,7 +537,7 @@
   .compass-label.se{transform:translate(-50%,-50%) translate(min(30vw,122px),min(30vw,122px));font-size:14px;}
   .compass-label.sw{transform:translate(-50%,-50%) translate(calc(min(30vw,122px) * -1),min(30vw,122px));font-size:14px;}
   .compass-label.nw{transform:translate(-50%,-50%) translate(calc(min(30vw,122px) * -1),calc(min(30vw,122px) * -1));font-size:14px;}
-  .compass-pointer{position:absolute;left:50%;top:5px;width:0;height:0;border-left:10px solid transparent;border-right:10px solid transparent;border-bottom:30px solid #ef3340;transform:translateX(-50%);z-index:5;filter:drop-shadow(0 2px 4px rgba(0,0,0,.4));}
+  .compass-pointer{position:absolute;left:50%;top:50%;width:0;height:0;border-left:10px solid transparent;border-right:10px solid transparent;border-bottom:118px solid #ef3340;transform:translate(-50%,-100%) rotate(0deg);transform-origin:50% 100%;z-index:7;filter:drop-shadow(0 3px 5px rgba(0,0,0,.45));transition:transform .18s linear;} .compass-pointer.qibla-ready{border-bottom-color:#18a957;filter:drop-shadow(0 3px 6px rgba(0,0,0,.5));} .compass-pointer.qibla-ready::after{content:"";position:absolute;left:50%;top:0;transform:translateX(-50%);width:6px;height:6px;border-radius:50%;background:#fff;box-shadow:0 0 0 3px #18a957;}
   .compass-center{position:relative;z-index:4;width:116px;height:116px;border-radius:50%;background:#07172d;border:3px solid #f5a623;box-shadow:0 0 0 8px rgba(245,166,35,.08),0 8px 20px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;overflow:hidden;}
   .compass-center img{width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;}
   .compass-reading{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:14px;text-align:center;}
@@ -1909,6 +1909,10 @@ let kompasHeading = null;
 let kompasLastRaw = null;
 let kompasPermissionReady = false;
 let kompasScreenAngle = 0;
+let qiblaBearing = null;
+let qiblaLocation = null;
+let manualKegiatanDraft = "";
+let absensiKeteranganDraft = "";
 
 function kompasNormalize(deg){
   let d = Number(deg);
@@ -1954,6 +1958,16 @@ function kompasRenderHeading(raw){
   kompasLastRaw=h;
   const dial=document.getElementById('kompas-dial');
   if(dial) dial.style.transform=`rotate(${-h}deg)`;
+  const qp=document.getElementById('kompas-pointer');
+  if(qp){
+    if(qiblaBearing!==null){ qp.classList.add('qibla-ready'); qp.style.transform=`translateX(-50%) rotate(${qiblaBearing-h}deg)`; }
+    else { qp.classList.remove('qibla-ready'); qp.style.transform='translateX(-50%) rotate(0deg)'; }
+  }
+  const qrel=qiblaBearing===null?null:kompasNormalize(qiblaBearing-h);
+  if(qrel!==null){
+    kompasSetText('qibla-relative', `${Math.round(qrel)}°`);
+    kompasSetText('qibla-direction', qrel<8||qrel>352?'TEPAT DI DEPAN':qrel<180?'PUTAR KE KANAN':'PUTAR KE KIRI');
+  }
   kompasSetText('kompas-degree', `${Math.round(h)}°`);
   kompasSetText('kompas-direction', kompasDirection(h));
   kompasSetText('kompas-status-text','Aktif');
@@ -2007,6 +2021,7 @@ function kompasReset(){
   kompasHeading=null;
   kompasLastRaw=null;
   const dial=document.getElementById('kompas-dial'); if(dial) dial.style.transform='rotate(0deg)';
+  const qp=document.getElementById('kompas-pointer'); if(qp){ qp.classList.toggle('qibla-ready',qiblaBearing!==null); qp.style.transform='translateX(-50%) rotate(0deg)'; }
 }
 async function kompasAktifkan(){
   kompasReset();
@@ -2016,6 +2031,43 @@ async function kompasAktifkan(){
 function kompasArahSaatIni(){
   if(kompasLastRaw===null){ toast('Sensor kompas belum aktif. Tekan "Aktifkan Kompas" terlebih dahulu.'); return; }
   toast(`Arah saat ini ${Math.round(kompasLastRaw)}° — ${kompasDirection(kompasLastRaw)}`);
+}
+function qiblaCalculate(lat,lon){
+  const kaabaLat=21.422487, kaabaLon=39.826206;
+  const p1=lat*Math.PI/180, p2=kaabaLat*Math.PI/180;
+  const dl=(kaabaLon-lon)*Math.PI/180;
+  const y=Math.sin(dl)*Math.cos(p2);
+  const x=Math.cos(p1)*Math.sin(p2)-Math.sin(p1)*Math.cos(p2)*Math.cos(dl);
+  return kompasNormalize(Math.atan2(y,x)*180/Math.PI);
+}
+function qiblaUpdateUI(){
+  const b=qiblaBearing;
+  kompasSetText('qibla-bearing',b===null?'Belum dihitung':`${b.toFixed(1)}° dari Utara`);
+  if(b!==null && kompasLastRaw!==null){
+    const rel=kompasNormalize(b-kompasLastRaw);
+    kompasSetText('qibla-relative',`${Math.round(rel)}°`);
+    kompasSetText('qibla-direction',rel<8||rel>352?'TEPAT DI DEPAN':rel<180?'PUTAR KE KANAN':'PUTAR KE KIRI');
+  }
+  const qp=document.getElementById('kompas-pointer');
+  if(qp){
+    if(b!==null){ qp.classList.add('qibla-ready'); if(kompasLastRaw!==null) qp.style.transform=`translateX(-50%) rotate(${b-kompasLastRaw}deg)`; }
+    else qp.classList.remove('qibla-ready');
+  }
+}
+function qiblaGetLocation(){
+  if(!navigator.geolocation){ toast('GPS/lokasi tidak tersedia di browser ini.'); return; }
+  kompasSetText('qibla-location-status','Mengambil lokasi GPS…');
+  navigator.geolocation.getCurrentPosition(pos=>{
+    const {latitude,longitude,accuracy}=pos.coords;
+    qiblaLocation={latitude,longitude,accuracy};
+    qiblaBearing=qiblaCalculate(latitude,longitude);
+    kompasSetText('qibla-location-status',`Lokasi siap · akurasi ±${Math.round(accuracy||0)} m`);
+    qiblaUpdateUI();
+    toast(`Arah Kiblat ${qiblaBearing.toFixed(1)}°. Jarum hijau menunjuk arah Kiblat.`);
+  },err=>{
+    const msg=err.code===1?'Izin lokasi ditolak. Izinkan lokasi untuk menghitung arah Kiblat.':err.code===2?'Lokasi tidak tersedia. Coba aktifkan GPS.':'Waktu mengambil lokasi habis. Coba lagi.';
+    kompasSetText('qibla-location-status',msg); toast(msg);
+  },{enableHighAccuracy:true,timeout:15000,maximumAge:0});
 }
 function renderKompas(){
   kompasStop();
@@ -2038,12 +2090,20 @@ function renderKompas(){
           <div class="compass-label n">N</div><div class="compass-label ne">NE</div><div class="compass-label e">E</div><div class="compass-label se">SE</div>
           <div class="compass-label s">S</div><div class="compass-label sw">SW</div><div class="compass-label w">W</div><div class="compass-label nw">NW</div>
         </div>
-        <div class="compass-pointer"></div>
+        <div class="compass-pointer" id="kompas-pointer" title="Jarum Kiblat"></div>
         <div class="compass-center"><img src="${KOMPAS_LOGO_KELUARGA}" alt="Logo Keluarga Besar Saka Bhayangkara"></div>
       </div>
       <div class="compass-reading">
         <div class="compass-degree" id="kompas-degree">—°</div>
         <div class="compass-direction" id="kompas-direction">Arah belum tersedia</div>
+      </div>
+      <div class="card" style="margin:12px 0;padding:12px;border:1px solid rgba(24,169,87,.25);background:rgba(24,169,87,.06);text-align:center;">
+        <div style="font-weight:900;font-size:13px;">🕌 Jarum Hijau = Arah Kiblat</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:3px;">Setelah lokasi didapat, cukup putar HP sampai jarum hijau menunjuk lurus ke depan.</div>
+        <div style="margin-top:7px;font-size:10px;color:var(--muted);" id="qibla-location-status">Belum mengambil lokasi</div>
+        <div style="margin-top:5px;font-size:11px;font-weight:900;" id="qibla-direction">—</div>
+        <div style="font-size:10px;color:var(--muted);margin-top:2px;">Sudut Kiblat: <b id="qibla-bearing">Belum dihitung</b> · Jarum: <b id="qibla-relative">—°</b></div>
+        <button class="compass-btn-secondary" style="width:100%;margin-top:8px;" onclick="qiblaGetLocation()">📍 Tentukan Arah Kiblat</button>
       </div>
       <div class="compass-info-grid">
         <div class="compass-info"><small>Status Sensor</small><b class="compass-status"><i class="compass-status-dot" id="kompas-status-dot"></i><span id="kompas-status-text">Belum aktif</span></b></div>
@@ -2054,7 +2114,7 @@ function renderKompas(){
         <button class="compass-btn-secondary" onclick="kompasArahSaatIni()">📐 Cek Arah</button>
       </div>
       <div class="compass-error" id="kompas-error"></div>
-      <div class="compass-note" id="kompas-note">Tekan "Aktifkan Kompas". Pada beberapa HP, browser akan meminta izin sensor. Setelah aktif, putar HP dan lingkaran kompas akan berputar otomatis seperti kompas biasa.</div>
+      <div class="compass-note" id="kompas-note">Tekan "Aktifkan Kompas", tentukan lokasi untuk Kiblat, lalu putar HP. Jarum hijau langsung menunjukkan arah Kiblat.</div>
     </div>`;
   // Android/Chrome umumnya tidak membutuhkan permission dialog. Mulai langsung;
   // iOS akan menunggu tombol karena requestPermission harus dipanggil dari gesture.
@@ -2971,7 +3031,25 @@ function sudahMulai(sesi){
 // Sesi yang sedang berlangsung sekarang (sudah mulai, belum tutup).
 function getSesiAktif(){
   const list = DB.absensiSesi || [];
-  return list.find(s=>sudahMulai(s) && !sudahLewatTutup(s)) || null;
+  return list.find(s=>{
+    if(!s || !sudahMulai(s)) return false;
+    // Semua mode memakai penanda penutupan yang sama. Ini mencegah sesi lama
+    // tetap dianggap berjalan hanya karena jam tutupnya tidak terbaca/format lama.
+    if(s.locked || s.ditutupManual || s.waktuDisimpan || s.waktuSelesai) return false;
+    // Sesi manual memang tidak bergantung pada jam selesai.
+    if(s.mode==='manual') return true;
+    // Sesi online tetap aktif sampai jam tutup atau tombol SELESAI & SIMPAN ditekan.
+    return !sudahLewatTutup(s);
+  }) || null;
+}
+
+function getSesiAktifByMode(mode){
+  const list = DB.absensiSesi || [];
+  return list.find(s=>s && s.mode===mode && sudahMulai(s) && !sudahLewatTutup(s)) || null;
+}
+function getKelolaAbsensiActiveMode(){
+  const aktif=getSesiAktif();
+  return aktif ? (aktif.mode==='manual'?'manual':'online') : null;
 }
 // Sesi terakhir yang dibuka hari ini (dipakai untuk pesan status di Absen Saya).
 function getSesiTerakhirHariIni(){
@@ -3178,6 +3256,25 @@ async function simpanAbsenSaya(a, sesi, status, keterangan){
 
 /* ---------------- Daftar Hadir (menyatu dengan Kelola Absensi — sesi sedang berlangsung + riwayat sesi) ---------------- */
 let DaftarHadirState = { sesiTerpilih: null, search: '' };
+function setupAbsensiInputStabilizer(){
+  if(window.__absensiInputStabilizerReady) return;
+  window.__absensiInputStabilizerReady=true;
+  document.addEventListener('input',e=>{
+    const t=e.target;
+    if(!t || t.id!=='dh-search') return;
+    DaftarHadirState.search=t.value;
+    requestAnimationFrame(()=>{
+      const el=document.getElementById('dh-search');
+      if(el && el.value!==DaftarHadirState.search){
+        el.value=DaftarHadirState.search;
+        try{ el.setSelectionRange(el.value.length,el.value.length); }catch(_){ }
+      }
+      filterDaftarHadirRows();
+    });
+  },true);
+}
+setupAbsensiInputStabilizer();
+
 function filterDaftarHadirRows(){
   const q=(document.getElementById('dh-search')?.value||'').trim().toLowerCase();
   DaftarHadirState.search=q;
@@ -3358,36 +3455,128 @@ async function syncAbsensiShared(){
     if(Array.isArray(abs)) DB.absensi=abs;
     if(Array.isArray(ses)) DB.absensiSesi=ses;
     if(Array.isArray(samp)) DB.absensiSampah=samp;
-    if(currentView==='daftar-hadir') renderDaftarHadir();
-    else if(currentView==='admin-absen') switchKelolaAbsensiMode(window._kelolaAbsenMode||'online');
+    // Jangan melakukan re-render saat pengguna sedang mengetik.
+    // Re-render setiap 5 detik sebelumnya membuat input nama kegiatan/pencarian
+    // kehilangan fokus dan teks terlihat terhapus/berhenti.
+    const active=document.activeElement;
+    const sedangMengetik=!!(active && (active.tagName==='INPUT' || active.tagName==='TEXTAREA' || active.tagName==='SELECT') && (currentView==='daftar-hadir' || currentView==='admin-absen'));
+    if(!sedangMengetik){
+      if(currentView==='daftar-hadir') renderDaftarHadir();
+      else if(currentView==='admin-absen') switchKelolaAbsensiMode(window._kelolaAbsenMode||'online');
+    }
   }catch(e){ console.warn('Sinkronisasi absensi gagal:',e); }
 }
 function startAbsensiSync(){
   if(absensiSyncTimer) clearInterval(absensiSyncTimer);
+  // Sinkronisasi langsung saat halaman dibuka, lalu ulangi setiap 5 detik.
+  if(currentView==='daftar-hadir'||currentView==='admin-absen') syncAbsensiShared();
   absensiSyncTimer=setInterval(()=>{ if(currentView==='daftar-hadir'||currentView==='admin-absen') syncAbsensiShared(); },5000);
 }
 function stopAbsensiSync(){ if(absensiSyncTimer){clearInterval(absensiSyncTimer);absensiSyncTimer=null;} }
 
 function renderAdminAbsen(){
   if(!canManageAbsensi()){ document.getElementById('content').innerHTML = '<div class="empty-state">Anda tidak memiliki akses ke halaman ini.</div>'; return; }
+  const activeMode=getKelolaAbsensiActiveMode();
+  const firstMode=activeMode || window._kelolaAbsenMode || 'online';
   document.getElementById('content').innerHTML = `
     <div class="section-title">Kelola Absensi</div>
     <div class="absen-mode-tabs">
-      <button class="absen-mode-tab active" id="mode-online" onclick="switchKelolaAbsensiMode('online')">📷 Absen Online</button>
-      <button class="absen-mode-tab" id="mode-manual" onclick="switchKelolaAbsensiMode('manual')">📝 Absen Manual</button>
+      <button class="absen-mode-tab ${activeMode==='online'?'active':''}" id="mode-online" onclick="switchKelolaAbsensiMode('online')" ${activeMode==='manual'?'disabled':''}>📷 Absen Online ${activeMode==='online'?'<span style="font-size:9.5px;opacity:.9;">(sedang aktif)</span>':''}</button>
+      <button class="absen-mode-tab ${activeMode==='manual'?'active':''}" id="mode-manual" onclick="switchKelolaAbsensiMode('manual')" ${activeMode==='online'?'disabled':''}>📝 Absen Manual ${activeMode==='manual'?'<span style="font-size:9.5px;opacity:.9;">(sedang aktif)</span>':''}</button>
     </div>
     <div id="kelola-absen-mode-content"></div>
   `;
-  switchKelolaAbsensiMode('online');
+  switchKelolaAbsensiMode(firstMode);
   startAbsensiSync();
 }
 function switchKelolaAbsensiMode(mode){
+  const activeMode=getKelolaAbsensiActiveMode();
+  if(activeMode && activeMode!==mode){
+    toast(`⚠️ Absen ${activeMode==='manual'?'Manual':'Online'} masih berjalan. Selesaikan/tutup absen tersebut terlebih dahulu.`);
+    return;
+  }
   window._kelolaAbsenMode=mode;
   const online=document.getElementById('mode-online'), manual=document.getElementById('mode-manual');
   if(online) online.classList.toggle('active',mode==='online');
   if(manual) manual.classList.toggle('active',mode==='manual');
   if(mode==='online') renderAdminAbsenOnline();
   else renderAbsenManual();
+}
+function genderAbsensiNorm(a){
+  const g=String(a?.gender||a?.jenisKelamin||a?.jenis_kelamin||'').trim().toLowerCase();
+  if(['l','laki-laki','laki laki','laki_laki','laki'].includes(g)) return 'L';
+  if(['p','perempuan','wanita'].includes(g)) return 'P';
+  return '';
+}
+function anggotaUntukKelolaAbsensi(sesi, gender){
+  const target=Array.isArray(sesi?.angkatanTarget)?sesi.angkatanTarget.map(String).filter(Boolean):[];
+  return (DB.anggota||[]).filter(a=>a && (a.status==null || String(a.status).toLowerCase()!=='nonaktif'))
+    .filter(a=>!target.length || target.includes(String(a.angkatan||'')))
+    .filter(a=>genderAbsensiNorm(a)===gender)
+    .sort((a,b)=>{
+      const aa=String(a.angkatan||''),bb=String(b.angkatan||'');
+      const na=Number(aa),nb=Number(bb);
+      if(Number.isFinite(na)&&Number.isFinite(nb)&&na!==nb) return nb-na;
+      return String(a.nama||'').localeCompare(String(b.nama||''),'id');
+    });
+}
+function kelolaAbsensiGenderTableHtml(sesi, gender, label, icon){
+  const members=anggotaUntukKelolaAbsensi(sesi,gender);
+  const rows=members.map((a,i)=>{
+    const r=(DB.absensi||[]).find(x=>x.sesiId===sesi.id&&x.anggotaId===a.id);
+    const status=r?.status||'';
+    const btn=(v,txt)=>`<button class="btn-outline kelola-status-btn ${status===v?'active':''}" style="padding:6px 8px;font-size:10.5px;${status===v?'font-weight:900;box-shadow:inset 0 0 0 2px currentColor;':''}" onclick="setKelolaAbsensiStatus('${sesi.id}','${a.id}','${v}')">${txt}</button>`;
+    return `<tr style="border-top:1px solid var(--line);">
+      <td style="padding:8px;width:32px;">${i+1}</td>
+      <td style="padding:8px;font-weight:800;min-width:145px;">${esc(a.nama||'-')}<div style="font-size:9.5px;color:var(--muted);font-weight:600;margin-top:2px;">Angkatan ${esc(String(a.angkatan||'-'))}</div></td>
+      <td style="padding:7px;min-width:205px;"><div style="display:flex;gap:5px;flex-wrap:wrap;">${btn('Hadir','✅ Hadir')}${btn('Izin','📝 Izin')}${btn('Sakit','🩺 Sakit')}${btn('Alpa','⚪ Alpa')}</div></td>
+      <td style="padding:8px;white-space:nowrap;">${status?absenStatusBadge(status):'<span style="font-size:10.5px;color:var(--muted);">Belum diisi</span>'}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="card" style="padding:0;overflow:hidden;">
+    <div style="padding:11px 12px;background:var(--bg,#f4f6fa);font-weight:900;font-size:13px;display:flex;justify-content:space-between;align-items:center;gap:8px;">
+      <span>${icon} ${label}</span><span style="font-size:10.5px;color:var(--muted);font-weight:700;">${members.length} anggota</span>
+    </div>
+    <div class="table-wrap"><table style="width:100%;border-collapse:collapse;font-size:11.5px;">
+      <thead><tr style="background:var(--card,#fff);"><th style="padding:9px 8px;text-align:left;">No</th><th style="padding:9px 8px;text-align:left;">Nama</th><th style="padding:9px 8px;text-align:left;">Isi Absen</th><th style="padding:9px 8px;text-align:left;">Status</th></tr></thead>
+      <tbody>${rows||'<tr><td colspan="4" class="empty-state">Belum ada anggota dengan jenis kelamin ini.</td></tr>'}</tbody>
+    </table></div>
+  </div>`;
+}
+function kelolaAbsensiAktifHtml(sesi){
+  const l=anggotaUntukKelolaAbsensi(sesi,'L').length;
+  const p=anggotaUntukKelolaAbsensi(sesi,'P').length;
+  return `<div class="section-title" style="margin-top:12px;">📝 Pengisian Absensi Bersama</div>
+    <div class="hint-box" style="margin-bottom:10px;">Sesi ini dibuat <b>satu kali saja</b>. Admin/Sekretaris lain yang masuk akan otomatis melihat sesi yang sama. Tabel laki-laki dan perempuan hanya dipisahkan untuk memudahkan pengisian; datanya tetap tersimpan pada <b>1 absensi yang sama</b>.</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:10px;">
+      ${kelolaAbsensiGenderTableHtml(sesi,'L','Laki-Laki','👨')}
+      ${kelolaAbsensiGenderTableHtml(sesi,'P','Perempuan','👩')}
+    </div>
+    <div style="font-size:10.5px;color:var(--muted);margin-top:8px;">👨 ${l} laki-laki · 👩 ${p} perempuan · Setiap tombol status langsung tersimpan dan otomatis tersinkron ke Admin/Sekretaris lain.</div>`;
+}
+async function setKelolaAbsensiStatus(sesiId, anggotaId, status){
+  if(!canManageAbsensi()) return;
+  const sesi=getSesiById(sesiId), a=(DB.anggota||[]).find(x=>x.id===anggotaId);
+  if(!sesi||!a||sudahLewatTutup(sesi)){ toast('Absen sudah ditutup.'); return; }
+  if(!sesiMencakupAngkatan(sesi,a.angkatan)){ toast('Anggota ini tidak termasuk angkatan yang dipilih.'); return; }
+  let r=(DB.absensi||[]).find(x=>x.sesiId===sesi.id&&x.anggotaId===a.id);
+  const now=new Date();
+  if(!r){
+    r={id:uid(),sesiId:sesi.id,anggotaId:a.id,nama:a.nama,angkatan:a.angkatan||null,jabatan:a.jabatan||'Anggota Biasa',tanggal:sesi.tanggal,waktu:now.toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'}),status,keterangan:'',approval:'Disetujui',oleh:session.nama,disetujuiOleh:session.nama,waktuPersetujuan:now.toISOString(),diubahOleh:null,waktuUbah:null};
+    DB.absensi.push(r);
+  }else{
+    r.status=status;
+    r.approval='Disetujui';
+    r.oleh=r.oleh||session.nama;
+    r.disetujuiOleh=session.nama;
+    r.waktuPersetujuan=now.toISOString();
+    r.diubahOleh=session.nama;
+    r.waktuUbah=now.toISOString();
+    if(!r.tanggal) r.tanggal=sesi.tanggal;
+  }
+  await save('absensi');
+  toast(a.nama+' → '+status);
+  renderAdminAbsenOnline();
 }
 function renderAdminAbsenOnline(){
   if(!canManageAbsensi()){ document.getElementById('content').innerHTML = '<div class="empty-state">Anda tidak memiliki akses ke halaman ini.</div>'; return; }
@@ -3404,8 +3593,9 @@ function renderAdminAbsenOnline(){
         <div style="font-size:11.5px;color:var(--muted);margin-top:4px;">📅 ${fmtDate(sesiAktif.tanggal)} · 🕒 ${esc(sesiAktif.jamMulai)} – ${esc(sesiAktif.jamSelesai)} · dibuka oleh ${esc(sesiAktif.dibukaOleh)}</div>
         <div style="font-size:11.5px;margin-top:2px;">📝 Kegiatan: ${esc(sesiAktif.keterangan||'-')}</div>
         <div style="font-size:11.5px;margin-top:3px;">👥 Target: ${labelAngkatanTarget(sesiAktif)}</div>
-        <button class="btn-outline" style="width:100%;margin-top:10px;" onclick="tutupSesiSekarang('${sesiAktif.id}')">⏹ Tutup Absen Ini Sekarang</button>
-      </div>`;
+        <button class="btn-primary" style="width:100%;margin-top:10px;" onclick="selesaiSimpanSesiAktif('${sesiAktif.id}')">✅ SELESAI & SIMPAN ABSEN</button>
+      </div>
+      ${kelolaAbsensiAktifHtml(sesiAktif)}`;
   } else {
     const tglDefault = todayStr();
     controlHtml = `
@@ -3422,7 +3612,7 @@ function renderAdminAbsenOnline(){
           </div>
           <div style="font-size:10px;color:var(--muted);margin-top:5px;">Pilih minimal satu angkatan. Bisa pilih 1 saja (contoh: 22) atau beberapa sekaligus.</div>
         </div>
-        <div class="field"><label>Keterangan Absen (Nama Kegiatan)</label><input type="text" id="absen-keterangan" placeholder="Contoh: Latihan Rutin Saka Bhayangkara"></div>
+        <div class="field"><label>Keterangan Absen (Nama Kegiatan)</label><input type="text" id="absen-keterangan" value="${esc(absensiKeteranganDraft||'')}" autocomplete="off" spellcheck="false" placeholder="Contoh: Latihan Rutin Saka Bhayangkara" oninput="absensiKeteranganDraft=this.value"></div>
         <button class="btn-primary" style="width:100%;" onclick="mulaiAbsenBaru()">▶ Mulai Absen</button>
       </div>`;
   }
@@ -3459,6 +3649,15 @@ function renderAdminAbsenOnline(){
 }
 async function mulaiAbsenBaru(){
   if(!canManageAbsensi()) return;
+  // Ambil kondisi terbaru dari database agar Sekretaris 2 tidak membuat sesi
+  // baru berdasarkan data lokal yang belum tersinkron dari Sekretaris 1.
+  await syncAbsensiShared();
+  const sesiAktifLain=getSesiAktif();
+  if(sesiAktifLain){
+    toast(`⚠️ Absen ${sesiAktifLain.mode==='manual'?'Manual':'Online'} masih berjalan. Jangan membuat absen baru sampai sesi tersebut ditutup/disimpan.`);
+    renderAdminAbsen();
+    return;
+  }
   const tanggal = document.getElementById('absen-tanggal').value;
   const jamMulai = document.getElementById('absen-jam-mulai').value;
   const jamSelesai = document.getElementById('absen-jam-selesai').value;
@@ -3473,19 +3672,38 @@ async function mulaiAbsenBaru(){
   };
   DB.absensiSesi.push(sesiBaru);
   await save('absensiSesi');
+  // Pastikan data yang tampil berasal dari penyimpanan bersama setelah sesi dibuat.
+  await syncAbsensiShared();
+  absensiKeteranganDraft='';
   toast('Absen dibuka. Anggota sekarang bisa mengisi status kehadiran.');
   renderAdminAbsen();
 }
-async function tutupSesiSekarang(id){
+async function selesaiSimpanSesiAktif(id){
   if(!canManageAbsensi()) return;
-  const sesi = getSesiById(id);
+  const sesi=getSesiById(id);
   if(!sesi) return;
-  if(!confirm('Tutup absen ini sekarang? Anggota yang belum mengisi akan otomatis tercatat Alpa.')) return;
-  sesi.ditutupManual = true;
+  if(!confirm('Selesaikan dan simpan absen ini sekarang? Anggota yang belum mengisi akan otomatis dicatat sebagai Alpa. Setelah disimpan, sesi tidak lagi dianggap berjalan dan Anda dapat membuat absen baru.')) return;
+  const now=new Date();
+  const nowIso=now.toISOString();
+  sesi.jamSelesai=localTimeStr(now);
+  sesi.waktuSelesai=nowIso;
+  sesi.waktuDisimpan=nowIso;
+  sesi.disimpanOleh=session.nama;
+  sesi.ditutupManual=true;
+  sesi.locked=true;
+  sesi.alpaDiproses=false;
   await save('absensiSesi');
   ensureAlpaProcessed();
-  toast('Absen ditutup.');
+  await save('absensiSesi');
+  // Segarkan data bersama supaya perangkat/akun Sekretaris lain segera melihat
+  // bahwa sesi yang sama sudah selesai dan tombol Buat Absen Baru tersedia.
+  await syncAbsensiShared();
+  toast('✅ Absen selesai dan tersimpan. Sekarang Anda bisa membuat absen baru.');
+  window._kelolaAbsenMode='online';
   renderAdminAbsen();
+}
+async function tutupSesiSekarang(id){
+  return selesaiSimpanSesiAktif(id);
 }
 async function setujuiSatuAbsen(id){
   if(!canManageAbsensi()) return;
@@ -3604,7 +3822,7 @@ function renderAbsenManual(){
     document.getElementById('kelola-absen-mode-content').innerHTML=`
       <div class="card">
         <div style="font-weight:800;font-size:13px;margin-bottom:10px;">📝 Buat Absen Manual</div>
-        <div class="field"><label>Keterangan / Nama Kegiatan</label><input id="manual-kegiatan" placeholder="Contoh: Latihan Rutin"></div>
+        <div class="field"><label>Keterangan / Nama Kegiatan</label><input id="manual-kegiatan" value="${esc(manualKegiatanDraft||'')}" autocomplete="off" spellcheck="false" placeholder="Contoh: Latihan Rutin" oninput="manualKegiatanDraft=this.value"></div>
         <div class="manual-live-clock">🕒 Waktu sekarang<br><b id="manual-live-clock">--:--:--</b><div id="manual-live-date" style="font-size:10px;font-weight:600;color:var(--muted);margin-top:2px;">Memuat tanggal...</div></div>
         <div style="font-size:10.5px;color:var(--muted);margin-top:8px;">Tanggal dan waktu mulai akan diambil otomatis dari waktu lokal perangkat saat tombol MULAI ABSEN ditekan.</div>
         ${manualAngkatanPickerHtml()}
@@ -3616,7 +3834,13 @@ function renderAbsenManual(){
 }
 async function mulaiAbsenManual(){
   if(!canManageAbsensi()){ toast('⚠️ Hanya Admin dan Sekretaris yang boleh mengisi Absen Manual'); return; }
-  const kegiatan=(document.getElementById('manual-kegiatan')?.value||'').trim();
+  const sesiAktifLain=getSesiAktif();
+  if(sesiAktifLain){
+    toast(`⚠️ Absen ${sesiAktifLain.mode==='manual'?'Manual':'Online'} masih berjalan. Jangan membuat absen baru sampai sesi tersebut ditutup/disimpan.`);
+    renderAdminAbsen();
+    return;
+  }
+  const kegiatan=(document.getElementById('manual-kegiatan')?.value||manualKegiatanDraft||'').trim();
   const angkatanTarget=[...document.querySelectorAll('.manual-angkatan-cb:checked')].map(x=>String(x.value));
   if(!kegiatan){ toast('Isi keterangan/nama kegiatan terlebih dahulu.'); return; }
   if(!angkatanTarget.length){ toast('Pilih minimal satu angkatan yang boleh diabsen.'); return; }
@@ -3634,6 +3858,7 @@ async function mulaiAbsenManual(){
   DB.absensiSesi=DB.absensiSesi||[];
   DB.absensiSesi.push(sesi);
   await save('absensiSesi');
+  manualKegiatanDraft='';
   ManualAbsenState={sesiId:sesi.id,draft:{}};
   renderManualSession(sesi);
 }
@@ -3649,30 +3874,26 @@ function manualDraftFor(sesi){
 function renderManualSession(sesi){
   if(!sesi||!isManualSesi(sesi)) return renderAbsenManual();
   const members=anggotaAktifUntukManual(sesi), draft=manualDraftFor(sesi), locked=!!sesi.locked;
-  const grouped={};
-  members.forEach(a=>{const key=String(a.angkatan||'').trim()||'__belum__';(grouped[key]||(grouped[key]=[])).push(a);});
-  const keys=Object.keys(grouped).sort((a,b)=>{
-    if(a==='__belum__')return 1;if(b==='__belum__')return -1;
-    const na=Number(a),nb=Number(b);
-    if(Number.isFinite(na)&&Number.isFinite(nb)&&na!==nb)return nb-na;
-    return b.localeCompare(a,'id');
-  });
-
-  const sections=keys.map(key=>{
-    const rows=grouped[key].sort((a,b)=>String(a.nama||'').localeCompare(String(b.nama||''),'id')).map((a,i)=>{
+  const groupedGender={L:[],P:[],U:[]};
+  members.forEach(a=>{ const g=genderAbsensiNorm(a); (groupedGender[g==='L'?'L':g==='P'?'P':'U']).push(a); });
+  const genderSections=[
+    ['L','👨 Laki-Laki'],['P','👩 Perempuan'],['U','⚪ Jenis Kelamin Belum Diisi']
+  ].map(([gender,label])=>{
+    const list=groupedGender[gender]||[];
+    if(!list.length) return '';
+    const rows=list.sort((a,b)=>String(a.nama||'').localeCompare(String(b.nama||''),'id')).map((a,i)=>{
       const val=draft[a.id]||'';
       const buttons=manualStatusList().map(([v,label])=>`<button class="manual-status-btn ${val===v?'active':''}" ${locked?'disabled':''} onclick="setManualStatus('${sesi.id}','${a.id}','${v}')">${label}</button>`).join('');
       return `<tr style="border-top:1px solid var(--line);">
-        <td style="padding:8px;">${i+1}</td><td style="padding:8px;font-weight:700;">${esc(a.nama||'-')}</td>
+        <td style="padding:8px;">${i+1}</td><td style="padding:8px;font-weight:700;">${esc(a.nama||'-')}<div style="font-size:9.5px;color:var(--muted);margin-top:2px;">Angkatan ${esc(String(a.angkatan||'-'))}</div></td>
         <td style="padding:8px;min-width:230px;"><div class="manual-status-grid">${buttons}</div></td>
         <td style="padding:8px;">${val?absenStatusBadge(val):'<span style="color:var(--muted);">Belum dipilih</span>'}</td>
       </tr>`;
     }).join('');
-    const title=key==='__belum__'?'⚠️ BELUM DIISI ANGKATAN':`📌 ANGKATAN ${esc(key)}`;
-    return `<div style="font-weight:900;font-size:12px;margin:12px 0 7px;">${title}</div>
+    return `<div style="font-weight:900;font-size:12px;margin:12px 0 7px;">${label} <span style="font-size:10px;color:var(--muted);">(${list.length} anggota)</span></div>
       <div class="card table-wrap" style="padding:0;"><table style="width:100%;border-collapse:collapse;font-size:11.5px;">
       <thead><tr style="background:var(--bg,#f4f6fa);"><th style="padding:9px 8px;">No</th><th style="padding:9px 8px;text-align:left;">Nama Lengkap</th><th style="padding:9px 8px;text-align:left;">Pilihan Status</th><th style="padding:9px 8px;text-align:left;">Status Kehadiran</th></tr></thead>
-      <tbody>${rows||'<tr><td colspan="4" class="empty-state">Belum ada data anggota.</td></tr>'}</tbody></table></div>`;
+      <tbody>${rows}</tbody></table></div>`;
   }).join('');
 
   const now=new Date();
@@ -3688,8 +3909,9 @@ function renderManualSession(sesi){
       ${locked?'<div class="manual-locked">🔒 Pengisian utama sudah disimpan. Perubahan setelah ini hanya melalui tombol EDIT ABSEN di Daftar Hadir dan hanya sampai 24 jam.</div>':''}
     </div>
     <div class="section-title">Daftar Hadir — Hanya Angkatan Terpilih</div>
-    ${sections||'<div class="empty-state">Belum ada anggota dari angkatan yang dipilih.</div>'}
-    ${locked ? '' : `<button class="btn-primary" style="width:100%;margin-top:10px;" onclick="selesaiSimpanAbsenManual('${sesi.id}')">✅ SELESAI & SIMPAN ABSEN</button>`}
+    ${genderSections||'<div class="empty-state">Belum ada anggota dari angkatan yang dipilih.</div>'}
+    ${locked ? '' : `<button class="btn-primary" style="width:100%;margin-top:10px;" onclick="selesaiSimpanAbsenManual('${sesi.id}')">✅ SELESAI & SIMPAN ABSEN</button>
+    <button class="btn-outline" style="width:100%;margin-top:8px;" onclick="tutupSesiManualSekarang('${sesi.id}')">⏹ TUTUP ABSEN MANUAL SEKARANG</button>`}
     ${locked && isWithin24 ? `<button class="btn-outline" style="width:100%;margin-top:10px;" onclick="navigate('daftar-hadir')">📋 BUKA DAFTAR HADIR UNTUK EDIT</button>` : ''}
   `;
   startManualLiveClock();
@@ -3697,6 +3919,13 @@ function renderManualSession(sesi){
 function setManualStatus(sesiId,anggotaId,status){
   const s=getSesiById(sesiId); if(!s||s.locked||!canManageAbsensi()) return;
   ManualAbsenState.sesiId=sesiId; manualDraftFor(s); ManualAbsenState.draft[anggotaId]=status; renderManualSession(s);
+}
+async function tutupSesiManualSekarang(sesiId){
+  if(!canManageAbsensi()) return;
+  const s=getSesiById(sesiId);
+  if(!s || !isManualSesi(s) || s.locked) return;
+  if(!confirm('Tutup Absen Manual sekarang? Status yang belum dipilih akan otomatis dicatat sebagai Alpa.')) return;
+  await selesaiSimpanAbsenManual(sesiId);
 }
 async function selesaiSimpanAbsenManual(sesiId){
   if(!canManageAbsensi()) return;
@@ -5779,6 +6008,19 @@ function renderRekapAnggota(){
   const all=Array.isArray(DB.anggota)?DB.anggota:[];
   const aktif=all.filter(a=>a.status==='Aktif');
   const nonaktif=all.filter(a=>a.status!=='Aktif');
+  // Rekap jenis kelamin dihitung langsung dari DB.anggota, tanpa data dummy.
+  const genderNorm=a=>{
+    const g=String(a?.gender||a?.jenisKelamin||a?.jenis_kelamin||'').trim().toLowerCase();
+    if(g==='l' || g==='laki-laki' || g==='laki laki' || g==='laki_laki') return 'L';
+    if(g==='p' || g==='perempuan' || g==='wanita') return 'P';
+    return '';
+  };
+  const jumlahLaki=all.filter(a=>genderNorm(a)==='L').length;
+  const jumlahPerempuan=all.filter(a=>genderNorm(a)==='P').length;
+  const jumlahGenderKosong=all.length-jumlahLaki-jumlahPerempuan;
+  const totalGender=all.length;
+  const persenGender=n=>totalGender?Math.round((n/totalGender)*1000)/10:0;
+  const persenLaki=persenGender(jumlahLaki), persenPerempuan=persenGender(jumlahPerempuan), persenKosong=persenGender(jumlahGenderKosong);
   const angkatan=[...new Set(all.map(a=>String(a.angkatan||'')).filter(Boolean))].sort((a,b)=>Number(a)-Number(b));
   const sekolahMap={};
   all.forEach(a=>{
@@ -5797,6 +6039,38 @@ function renderRekapAnggota(){
       ${card('✅','Aktif',aktif.length,"",'Klik untuk melihat data')}
       ${card('⏸️','Non Aktif',nonaktif.length,"",'Klik untuk melihat data')}
       ${card('🏷️','Total Angkatan',angkatan.length,"",'Klik untuk melihat peserta per angkatan')}
+    </div>
+
+    <div class="section-title">👫 Rekapitulasi Jenis Kelamin</div>
+    <div class="card" style="margin-bottom:10px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+        <div><div style="font-weight:900;font-size:14px;">Komposisi Anggota</div><div style="font-size:10.5px;color:var(--muted);margin-top:3px;">Persentase dihitung otomatis dari seluruh data anggota</div></div>
+        <div style="font-size:12px;font-weight:900;">Total ${totalGender} anggota</div>
+      </div>
+      <div style="margin-top:12px;height:14px;border-radius:99px;overflow:hidden;background:#eef1f6;display:flex;">
+        <div title="Laki-laki ${persenLaki}%" style="width:${persenLaki}%;background:#2f6fed;"></div>
+        <div title="Perempuan ${persenPerempuan}%" style="width:${persenPerempuan}%;background:#d95f9a;"></div>
+        <div title="Belum diisi ${persenKosong}%" style="width:${persenKosong}%;background:#8a93a8;"></div>
+      </div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:9px;font-size:10.5px;color:var(--muted);">
+        <span><b style="color:#2f6fed;">●</b> Laki-laki ${persenLaki}%</span>
+        <span><b style="color:#d95f9a;">●</b> Perempuan ${persenPerempuan}%</span>
+        <span><b style="color:#8a93a8;">●</b> Belum diisi ${persenKosong}%</span>
+      </div>
+    </div>
+    <div class="stat-grid" style="margin-top:0;">
+      <div class="stat-card" data-rekap-card="gender-L" style="cursor:pointer;">
+        <div class="stat-top"><div class="stat-ic" style="background:#2f6fed;">♂</div><div class="stat-label">Laki-laki</div></div>
+        <div class="stat-val">${jumlahLaki}</div><div class="stat-sub">${persenLaki}% dari total · Klik untuk melihat</div>
+      </div>
+      <div class="stat-card" data-rekap-card="gender-P" style="cursor:pointer;">
+        <div class="stat-top"><div class="stat-ic" style="background:#d95f9a;">♀</div><div class="stat-label">Perempuan</div></div>
+        <div class="stat-val">${jumlahPerempuan}</div><div class="stat-sub">${persenPerempuan}% dari total · Klik untuk melihat</div>
+      </div>
+      <div class="stat-card" data-rekap-card="gender-empty" style="cursor:pointer;">
+        <div class="stat-top"><div class="stat-ic" style="background:#8a93a8;">?</div><div class="stat-label">Belum Diisi</div></div>
+        <div class="stat-val">${jumlahGenderKosong}</div><div class="stat-sub">${persenKosong}% dari total · Data tanpa jenis kelamin</div>
+      </div>
     </div>
 
     <div class="section-title">📋 Menu Rekapitulasi Anggota</div>
@@ -5858,6 +6132,9 @@ function renderRekapAnggota(){
       else if(kind==='aktif') rekapAnggotaDetail('✅ Anggota Aktif',DB.anggota.filter(a=>a.status==='Aktif'));
       else if(kind==='nonaktif') rekapAnggotaDetail('⏸️ Anggota Non Aktif',DB.anggota.filter(a=>a.status!=='Aktif'));
       else if(kind==='angkatan') rekapAnggotaDetail('🏷️ Daftar Angkatan',DB.anggota.filter(a=>String(a.angkatan||'')));
+      else if(kind==='gender-L') rekapAnggotaDetail('♂ Laki-laki',DB.anggota.filter(a=>{const g=String(a?.gender||a?.jenisKelamin||a?.jenis_kelamin||'').trim().toLowerCase();return ['l','laki-laki','laki laki','laki_laki'].includes(g);}));
+      else if(kind==='gender-P') rekapAnggotaDetail('♀ Perempuan',DB.anggota.filter(a=>{const g=String(a?.gender||a?.jenisKelamin||a?.jenis_kelamin||'').trim().toLowerCase();return ['p','perempuan','wanita'].includes(g);}));
+      else if(kind==='gender-empty') rekapAnggotaDetail('❓ Jenis Kelamin Belum Diisi',DB.anggota.filter(a=>{const g=String(a?.gender||a?.jenisKelamin||a?.jenis_kelamin||'').trim().toLowerCase();return !['l','laki-laki','laki laki','laki_laki','p','perempuan','wanita'].includes(g);}));
     }
   };
   document.addEventListener('click',(e)=>{
@@ -6015,7 +6292,7 @@ function anggotaFormHtml(a, selfEdit, secretaryEdit){
     <div class="field"><label>No. WhatsApp/Telp Orang Tua</label><input id="f-nowa-ortu" value="${esc(a.noWaOrtu||'')}" placeholder="Contoh: 0812xxxxxxx"></div>
     <div class="field"><label>Krida</label>${a.jabatan==='Pembina' ? `<input value="-" disabled style="opacity:.65;">` : `<select id="f-krida">${KRIDA_LIST.map(k=>`<option ${k.key===a.krida?'selected':''}>${k.key}</option>`).join('')}</select>`}</div>
     <div class="field"><label>Angkatan</label><select id="f-angkatan">${getAngkatanList().map(n=>`<option value="${n}" ${n===a.angkatan?'selected':''}>Angkatan ${n} (${tahunMasukAngkatan(n)})</option>`).join('')}</select></div>
-    ${(selfEdit || secretaryEdit) ? `
+    ${(selfEdit || (secretaryEdit && a && a.id)) ? `
     <div class="field"><label>Jabatan Utama</label><input value="${esc(getJabatanUtama(a))}" disabled style="opacity:.65;"></div>
     <div class="field"><label>Jabatan Tambahan</label><input value="${esc(getJabatanTambahan(a))}" disabled style="opacity:.65;"></div>
     <div class="field"><label>Agama</label>
