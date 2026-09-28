@@ -3420,32 +3420,55 @@ function absensiTableHtml(list, tableId, showUbah){
 }
 
 function absensiTableGroupedHtml(list, tableId, showUbah){
-  const grouped={};
-  (list||[]).forEach(r=>{
-    const key=(r.angkatan===null||r.angkatan===undefined||String(r.angkatan).trim()==='')?'__belum__':String(r.angkatan);
-    (grouped[key] ||= []).push(r);
+  const rowsList=Array.isArray(list)?list:[];
+  if(!rowsList.length) return '<div class="card"><div class="empty-state">Belum ada data absensi.</div></div>';
+  const sesiGroups={};
+  rowsList.forEach(r=>{
+    const sid=r.sesiId||'__tanpa_sesi__';
+    (sesiGroups[sid] ||= []).push(r);
   });
-  const keys=Object.keys(grouped).filter(k=>k!=='__belum__').sort((a,b)=>Number(b)-Number(a));
-  if(grouped.__belum__) keys.push('__belum__');
-  if(!keys.length) return '<div class="card"><div class="empty-state">Belum ada data absensi.</div></div>';
-  return keys.map(key=>{
-    const rows=grouped[key].sort((a,b)=>String(a.nama||'').localeCompare(String(b.nama||''),'id'));
-    const title=key==='__belum__'?'⚠️ BELUM DIISI ANGKATAN':`📌 ANGKATAN ${esc(key)}`;
-    return `<div style="margin-bottom:14px;">
-      <div style="font-size:12.5px;font-weight:800;color:var(--navy);padding:8px 4px;">${title}</div>
-      <div class="card table-wrap" style="padding:0;"><table id="${esc(tableId)}-${esc(key)}" style="width:100%;border-collapse:collapse;font-size:11.5px;">
-        <thead><tr style="background:var(--bg,#f4f6fa);">
-          <th style="padding:9px 8px;text-align:left;">No</th><th style="padding:9px 8px;text-align:left;">Nama</th><th style="padding:9px 8px;text-align:left;">Kegiatan</th><th style="padding:9px 8px;text-align:left;">Tanggal</th><th style="padding:9px 8px;text-align:left;">Status</th><th style="padding:9px 8px;text-align:left;">Keterangan</th><th style="padding:9px 8px;text-align:left;">Disetujui Oleh</th>${showUbah?'<th style="padding:9px 8px;"></th>':''}
-        </tr></thead><tbody>
-        ${rows.map((r,i)=>{
-          const a=DB.anggota.find(x=>x.id===r.anggotaId), sesi=getSesiById(r.sesiId);
-          let disetujui=r.disetujuiOleh?esc(r.disetujuiOleh):'-';
-          if(r.diubahOleh) disetujui+=` <span style="color:var(--muted);">(diubah oleh ${esc(r.diubahOleh)})</span>`;
-          return `<tr style="border-top:1px solid var(--line);"><td style="padding:8px;">${i+1}</td><td style="padding:8px;font-weight:700;">${esc(r.nama||(a?a.nama:'Anggota tidak ditemukan'))}</td><td style="padding:8px;">${esc(sesi?sesi.keterangan||'-':'-')}</td><td style="padding:8px;">${fmtDate(r.tanggal)}</td><td style="padding:8px;">${absenStatusBadge(r.status)}</td><td style="padding:8px;">${esc(r.keterangan||'-')}</td><td style="padding:8px;">${disetujui}</td>${showUbah?`<td style="padding:8px;"><button class="btn-outline" style="padding:4px 10px;font-size:11px;" onclick="openUbahStatusAbsen('${r.id}')">Ubah</button></td>`:''}</tr>`;
-        }).join('')}
-        </tbody></table></div></div>`;
-  }).join('');
+  const sesiKeys=Object.keys(sesiGroups).sort((a,b)=>{
+    const sa=a==='__tanpa_sesi__'?null:getSesiById(a), sb=b==='__tanpa_sesi__'?null:getSesiById(b);
+    return String((sb&&sb.tanggal)||'').localeCompare(String((sa&&sa.tanggal)||'')) || String((sb&&sb.jamMulai)||'').localeCompare(String((sa&&sa.jamMulai)||''));
+  });
+  const result=[];
+  sesiKeys.forEach(sid=>{
+    const sessionRows=sesiGroups[sid]||[];
+    const sesi=sid==='__tanpa_sesi__'?null:getSesiById(sid);
+    const tanggal=(sesi&&sesi.tanggal)||sessionRows[0]?.tanggal||'';
+    const kegiatan=(sesi&&sesi.keterangan)||'-';
+    const jam=(sesi&&sesi.jamMulai&&sesi.jamSelesai)?` · ${esc(sesi.jamMulai)}–${esc(sesi.jamSelesai)}`:'';
+    result.push(`<div class="card" style="margin:14px 0 8px;padding:11px 12px;background:var(--bg,#f4f6fa);border-left:4px solid var(--navy);"><div style="font-size:12.5px;font-weight:950;color:var(--navy);">📅 ${esc(tanggal?fmtDate(tanggal):'-')} ${jam}</div><div style="font-size:12px;font-weight:800;margin-top:3px;">📝 ${esc(kegiatan)}</div></div>`);
+    const byGender={L:{label:'LAKI-LAKI',icon:'👨'},P:{label:'PEREMPUAN',icon:'👩'},'':{label:'JENIS KELAMIN BELUM DIISI',icon:'👤'}};
+    const byAngkatan={};
+    sessionRows.forEach(r=>{
+      const k=(r.angkatan==null||String(r.angkatan).trim()==='')?'__belum__':String(r.angkatan);
+      (byAngkatan[k] ||= []).push(r);
+    });
+    const angkatanKeys=Object.keys(byAngkatan).filter(k=>k!=='__belum__').sort((a,b)=>Number(b)-Number(a));
+    if(byAngkatan.__belum__) angkatanKeys.push('__belum__');
+    angkatanKeys.forEach(angkatan=>{
+      const title=angkatan==='__belum__'?'⚠️ ANGKATAN BELUM DIISI':`📌 ANGKATAN ${esc(angkatan)}`;
+      result.push(`<div style="font-size:13px;font-weight:950;color:var(--navy);margin:12px 2px 6px;">${title}</div>`);
+      Object.keys(byGender).forEach(g=>{
+        const rows=byAngkatan[angkatan].filter(r=>genderAbsensiNorm(DB.anggota.find(x=>x.id===r.anggotaId)||{})===g).sort((a,b)=>String(a.nama||'').localeCompare(String(b.nama||''),'id'));
+        if(!rows.length) return;
+        result.push(`<div style="font-size:11.5px;font-weight:900;margin:5px 2px;color:var(--text,#222);">${byGender[g].icon} ${byGender[g].label}</div>`);
+        const tableKey=`${tableId}-${sid.replace(/[^a-zA-Z0-9_-]/g,'_')}-${g}-${angkatan.replace(/[^a-zA-Z0-9_-]/g,'_')}`;
+        result.push(`<div class="card table-wrap" style="padding:0;margin-bottom:9px;"><table id="${esc(tableKey)}" data-print-group="${esc(tableId)}" style="width:100%;border-collapse:collapse;font-size:11.5px;"><thead><tr style="background:var(--bg,#f4f6fa);"><th style="padding:9px 8px;text-align:left;">No</th><th style="padding:9px 8px;text-align:left;">Nama</th><th style="padding:9px 8px;text-align:left;">Kegiatan</th><th style="padding:9px 8px;text-align:left;">Tanggal</th><th style="padding:9px 8px;text-align:left;">Status</th><th style="padding:9px 8px;text-align:left;">Keterangan</th><th style="padding:9px 8px;text-align:left;">Disetujui Oleh</th>${showUbah?'<th style="padding:9px 8px;"></th>':''}</tr></thead><tbody>${rows.map((r,i)=>{const a=DB.anggota.find(x=>x.id===r.anggotaId);let disetujui=r.disetujuiOleh?esc(r.disetujuiOleh):'-';if(r.diubahOleh)disetujui+=` <span style="color:var(--muted);">(diubah oleh ${esc(r.diubahOleh)})</span>`;return `<tr style="border-top:1px solid var(--line);"><td style="padding:8px;">${i+1}</td><td style="padding:8px;font-weight:700;">${esc(r.nama||(a?a.nama:'Anggota tidak ditemukan'))}</td><td style="padding:8px;">${esc(kegiatan)}</td><td style="padding:8px;">${fmtDate(r.tanggal||tanggal)}</td><td style="padding:8px;">${absenStatusBadge(r.status)}</td><td style="padding:8px;">${esc(r.keterangan||'-')}</td><td style="padding:8px;">${disetujui}</td>${showUbah?`<td style="padding:8px;"><button class="btn-outline" style="padding:4px 10px;font-size:11px;" onclick="openUbahStatusAbsen('${r.id}')">Ubah</button></td>`:''}</tr>`;}).join('')}</tbody></table></div>`);
+      });
+    });
+  });
+  return result.join('');
 }
+function daftarTanggalKegiatanHtml(list){
+  const groups={};
+  (list||[]).forEach(r=>{const sid=r.sesiId||'__tanpa_sesi__';(groups[sid] ||= []).push(r);});
+  const keys=Object.keys(groups).sort((a,b)=>{const sa=a==='__tanpa_sesi__'?null:getSesiById(a),sb=b==='__tanpa_sesi__'?null:getSesiById(b);return String((sb&&sb.tanggal)||groups[b][0]?.tanggal||'').localeCompare(String((sa&&sa.tanggal)||groups[a][0]?.tanggal||''));});
+  if(!keys.length) return '<div class="card"><div class="empty-state">Belum ada tanggal/kegiatan.</div></div>';
+  return `<div class="card" style="margin-bottom:12px;"><div style="font-weight:900;font-size:12.5px;margin-bottom:8px;">📋 Daftar Tanggal &amp; Kegiatan</div><div style="display:grid;gap:7px;">${keys.map((sid,i)=>{const s=sid==='__tanpa_sesi__'?null:getSesiById(sid),r=groups[sid][0];const t=(s&&s.tanggal)||r?.tanggal||'-',k=(s&&s.keterangan)||'-';return `<button type="button" class="btn-outline" style="width:100%;text-align:left;padding:9px 10px;" onclick="pilihHasilAbsenSesi('${esc(sid)}')">${i+1}. 📅 ${esc(t?fmtDate(t):'-')} — 📝 ${esc(k)} <span style="float:right;">${groups[sid].length} data</span></button>`;}).join('')}</div><button type="button" class="btn-primary" style="width:100%;margin-top:8px;" onclick="pilihHasilAbsenSesi('SEMUA')">📚 Tampilkan Semua Hasil</button></div>`;
+}
+function pilihHasilAbsenSesi(sesiId){ window._absenHasilSesiFilter=sesiId||'SEMUA'; renderAdminAbsenOnline(); }
 /* ---------------- ADMIN & SEKRETARIS: Kelola Absensi (buka sesi berkali-kali, setujui, ubah) ---------------- */
 let absensiSyncTimer=null;
 async function syncAbsensiShared(){
@@ -3522,36 +3545,38 @@ function anggotaUntukKelolaAbsensi(sesi, gender){
 }
 function kelolaAbsensiGenderTableHtml(sesi, gender, label, icon){
   const members=anggotaUntukKelolaAbsensi(sesi,gender);
-  const rows=members.map((a,i)=>{
-    const r=(DB.absensi||[]).find(x=>x.sesiId===sesi.id&&x.anggotaId===a.id);
-    const status=r?.status||'';
-    const btn=(v,txt)=>`<button class="btn-outline kelola-status-btn ${status===v?'active':''}" style="padding:6px 8px;font-size:10.5px;${status===v?'font-weight:900;box-shadow:inset 0 0 0 2px currentColor;':''}" onclick="setKelolaAbsensiStatus('${sesi.id}','${a.id}','${v}')">${txt}</button>`;
-    return `<tr style="border-top:1px solid var(--line);">
-      <td style="padding:8px;width:32px;">${i+1}</td>
-      <td style="padding:8px;font-weight:800;min-width:145px;">${esc(a.nama||'-')}<div style="font-size:9.5px;color:var(--muted);font-weight:600;margin-top:2px;">Angkatan ${esc(String(a.angkatan||'-'))}</div></td>
-      <td style="padding:7px;min-width:205px;"><div style="display:flex;gap:5px;flex-wrap:wrap;">${btn('Hadir','✅ Hadir')}${btn('Izin','📝 Izin')}${btn('Sakit','🩺 Sakit')}${btn('Alpa','⚪ Alpa')}</div></td>
-      <td style="padding:8px;white-space:nowrap;">${status?absenStatusBadge(status):'<span style="font-size:10.5px;color:var(--muted);">Belum diisi</span>'}</td>
-    </tr>`;
+  if(!members.length) return '';
+  const grouped={};
+  members.forEach(a=>{ const k=(a.angkatan===null||a.angkatan===undefined||String(a.angkatan).trim()==='')?'__belum__':String(a.angkatan); (grouped[k] ||= []).push(a); });
+  const keys=Object.keys(grouped).filter(k=>k!=='__belum__').sort((a,b)=>Number(b)-Number(a));
+  if(grouped.__belum__) keys.push('__belum__');
+  return keys.map(key=>{
+    const rows=grouped[key].sort((a,b)=>String(a.nama||'').localeCompare(String(b.nama||''),'id')).map((a,i)=>{
+      const r=(DB.absensi||[]).find(x=>x.sesiId===sesi.id&&x.anggotaId===a.id); const status=r?.status||'';
+      const btn=(v,txt)=>`<button class="btn-outline kelola-status-btn ${status===v?'active':''}" style="padding:6px 8px;font-size:10.5px;${status===v?'font-weight:900;box-shadow:inset 0 0 0 2px currentColor;':''}" onclick="setKelolaAbsensiStatus('${sesi.id}','${a.id}','${v}')">${txt}</button>`;
+      return `<tr style="border-top:1px solid var(--line);"><td style="padding:8px;width:32px;">${i+1}</td><td style="padding:8px;font-weight:800;min-width:145px;">${esc(a.nama||'-')}</td><td style="padding:7px;min-width:205px;"><div style="display:flex;gap:5px;flex-wrap:wrap;">${btn('Hadir','✅ Hadir')}${btn('Izin','📝 Izin')}${btn('Sakit','🩺 Sakit')}${btn('Alpa','⚪ Alpa')}</div></td><td style="padding:8px;white-space:nowrap;">${status?absenStatusBadge(status):'<span style="font-size:10.5px;color:var(--muted);">Belum diisi</span>'}</td></tr>`;
+    }).join('');
+    const title=key==='__belum__'?'⚠️ BELUM DIISI ANGKATAN':`📌 ANGKATAN ${esc(key)}`;
+    return `<div class="card" style="padding:0;overflow:hidden;margin-bottom:10px;"><div style="padding:10px 12px;background:var(--bg,#f4f6fa);font-weight:900;font-size:12.5px;display:flex;justify-content:space-between;align-items:center;"><span>${icon} ${label.toUpperCase()} — ${title}</span><span style="font-size:10px;color:var(--muted);">${grouped[key].length} anggota</span></div><div class="table-wrap"><table style="width:100%;border-collapse:collapse;font-size:11.5px;"><thead><tr><th style="padding:8px;text-align:left;">No</th><th style="padding:8px;text-align:left;">Nama</th><th style="padding:8px;text-align:left;">Isi Absen</th><th style="padding:8px;text-align:left;">Status</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
   }).join('');
-  return `<div class="card" style="padding:0;overflow:hidden;">
-    <div style="padding:11px 12px;background:var(--bg,#f4f6fa);font-weight:900;font-size:13px;display:flex;justify-content:space-between;align-items:center;gap:8px;">
-      <span>${icon} ${label}</span><span style="font-size:10.5px;color:var(--muted);font-weight:700;">${members.length} anggota</span>
-    </div>
-    <div class="table-wrap"><table style="width:100%;border-collapse:collapse;font-size:11.5px;">
-      <thead><tr style="background:var(--card,#fff);"><th style="padding:9px 8px;text-align:left;">No</th><th style="padding:9px 8px;text-align:left;">Nama</th><th style="padding:9px 8px;text-align:left;">Isi Absen</th><th style="padding:9px 8px;text-align:left;">Status</th></tr></thead>
-      <tbody>${rows||'<tr><td colspan="4" class="empty-state">Belum ada anggota dengan jenis kelamin ini.</td></tr>'}</tbody>
-    </table></div>
-  </div>`;
 }
 function kelolaAbsensiAktifHtml(sesi){
   const l=anggotaUntukKelolaAbsensi(sesi,'L').length;
   const p=anggotaUntukKelolaAbsensi(sesi,'P').length;
+  const target=Array.isArray(sesi?.angkatanTarget)?sesi.angkatanTarget.map(String).filter(Boolean):[];
+  const allMembers=(DB.anggota||[]).filter(a=>a && (a.status==null || String(a.status).toLowerCase()!=='nonaktif')).filter(a=>!target.length || target.includes(String(a.angkatan||'')));
+  const angkatanKeys=[...new Set(allMembers.map(a=>(a.angkatan==null||String(a.angkatan).trim()==='')?'__belum__':String(a.angkatan)))].filter(k=>k!=='__belum__').sort((a,b)=>Number(b)-Number(a));
+  if(allMembers.some(a=>a.angkatan==null||String(a.angkatan).trim()==='')) angkatanKeys.push('__belum__');
   return `<div class="section-title" style="margin-top:12px;">📝 Pengisian Absensi Bersama</div>
-    <div class="hint-box" style="margin-bottom:10px;">Sesi ini dibuat <b>satu kali saja</b>. Admin/Sekretaris lain yang masuk akan otomatis melihat sesi yang sama. Tabel laki-laki dan perempuan hanya dipisahkan untuk memudahkan pengisian; datanya tetap tersimpan pada <b>1 absensi yang sama</b>.</div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:10px;">
-      ${kelolaAbsensiGenderTableHtml(sesi,'L','Laki-Laki','👨')}
-      ${kelolaAbsensiGenderTableHtml(sesi,'P','Perempuan','👩')}
-    </div>
+    <div class="hint-box" style="margin-bottom:10px;">Nama peserta sekarang disusun <b>per angkatan terlebih dahulu</b>, lalu dipisahkan menjadi <b>laki-laki dan perempuan</b>. Jadi Angkatan 22 tidak bercampur dengan Angkatan 21, dan seterusnya. Data tetap tersimpan pada <b>1 absensi yang sama</b>.</div>
+    ${angkatanKeys.map(key=>{
+      const lm=allMembers.filter(a=>String(a.angkatan??'')===(key==='__belum__'?'':key)&&genderAbsensiNorm(a)==='L');
+      const pm=allMembers.filter(a=>String(a.angkatan??'')===(key==='__belum__'?'':key)&&genderAbsensiNorm(a)==='P');
+      if(!lm.length&&!pm.length) return '';
+      const fakeL={...sesi,angkatanTarget:[key==='__belum__'?'':key]};
+      const fakeP={...sesi,angkatanTarget:[key==='__belum__'?'':key]};
+      return `<div style="margin-bottom:14px;"><div style="font-size:14px;font-weight:950;color:var(--navy);margin:3px 2px 8px;">${key==='__belum__'?'⚠️ ANGKATAN BELUM DIISI':`📌 ANGKATAN ${esc(key)}`}</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:10px;">${kelolaAbsensiGenderTableHtml(fakeL,'L','Laki-Laki','👨')}${kelolaAbsensiGenderTableHtml(fakeP,'P','Perempuan','👩')}</div></div>`;
+    }).join('')}
     <div style="font-size:10.5px;color:var(--muted);margin-top:8px;">👨 ${l} laki-laki · 👩 ${p} perempuan · Setiap tombol status langsung tersimpan dan otomatis tersinkron ke Admin/Sekretaris lain.</div>`;
 }
 async function setKelolaAbsensiStatus(sesiId, anggotaId, status){
@@ -3583,7 +3608,9 @@ function renderAdminAbsenOnline(){
   ensureAlpaProcessed();
   const sesiAktif = getSesiAktif();
   const pending = DB.absensi.filter(r=>r.approval==='Menunggu Persetujuan').sort((x,y)=>{ const ax=x.angkatan==null?-1:Number(x.angkatan), ay=y.angkatan==null?-1:Number(y.angkatan); return ay-ax || String(x.nama||'').localeCompare(String(y.nama||''),'id'); });
-  const hasil = [...DB.absensi].filter(r=>r.approval!=='Menunggu Persetujuan').sort((x,y)=>new Date(y.tanggal+' '+(y.waktu||'00:00'))-new Date(x.tanggal+' '+(x.waktu||'00:00')));
+  const semuaHasil = [...DB.absensi].filter(r=>r.approval!=='Menunggu Persetujuan').sort((x,y)=>new Date(y.tanggal+' '+(y.waktu||'00:00'))-new Date(x.tanggal+' '+(x.waktu||'00:00')));
+  const filterSesi=window._absenHasilSesiFilter||'SEMUA';
+  const hasil=filterSesi==='SEMUA'?semuaHasil:semuaHasil.filter(r=>(r.sesiId||'__tanpa_sesi__')===filterSesi);
 
   let controlHtml;
   if(sesiAktif){
@@ -3640,10 +3667,12 @@ function renderAdminAbsenOnline(){
     ${controlHtml}
     ${pendingHtml}
     <div class="section-title">Hasil Absen</div>
+    ${daftarTanggalKegiatanHtml(semuaHasil)}
     <div style="display:flex;gap:8px;margin-bottom:10px;">
       <button class="btn-outline" style="flex:1;" onclick="exportAbsensiCSV()">⬇ Ekspor CSV/Excel</button>
       <button class="btn-outline" style="flex:1;" onclick="printAbsensi('absen-table')">🖨 Cetak</button>
     </div>
+    <div style="font-size:11px;color:var(--muted);margin:5px 2px 8px;">${filterSesi==='SEMUA'?'📚 Semua tanggal & kegiatan ditampilkan terpisah.':'📌 Menampilkan hasil untuk tanggal/kegiatan yang dipilih.'}</div>
     ${absensiTableGroupedHtml(hasil, 'absen-table', true)}
   `;
 }
@@ -3874,31 +3903,63 @@ function manualDraftFor(sesi){
 function renderManualSession(sesi){
   if(!sesi||!isManualSesi(sesi)) return renderAbsenManual();
   const members=anggotaAktifUntukManual(sesi), draft=manualDraftFor(sesi), locked=!!sesi.locked;
-  const groupedGender={L:[],P:[],U:[]};
-  members.forEach(a=>{ const g=genderAbsensiNorm(a); (groupedGender[g==='L'?'L':g==='P'?'P':'U']).push(a); });
-  const genderSections=[
-    ['L','👨 Laki-Laki'],['P','👩 Perempuan'],['U','⚪ Jenis Kelamin Belum Diisi']
-  ].map(([gender,label])=>{
-    const list=groupedGender[gender]||[];
-    if(!list.length) return '';
-    const rows=list.sort((a,b)=>String(a.nama||'').localeCompare(String(b.nama||''),'id')).map((a,i)=>{
-      const val=draft[a.id]||'';
-      const buttons=manualStatusList().map(([v,label])=>`<button class="manual-status-btn ${val===v?'active':''}" ${locked?'disabled':''} onclick="setManualStatus('${sesi.id}','${a.id}','${v}')">${label}</button>`).join('');
-      return `<tr style="border-top:1px solid var(--line);">
-        <td style="padding:8px;">${i+1}</td><td style="padding:8px;font-weight:700;">${esc(a.nama||'-')}<div style="font-size:9.5px;color:var(--muted);margin-top:2px;">Angkatan ${esc(String(a.angkatan||'-'))}</div></td>
-        <td style="padding:8px;min-width:230px;"><div class="manual-status-grid">${buttons}</div></td>
-        <td style="padding:8px;">${val?absenStatusBadge(val):'<span style="color:var(--muted);">Belum dipilih</span>'}</td>
-      </tr>`;
-    }).join('');
-    return `<div style="font-weight:900;font-size:12px;margin:12px 0 7px;">${label} <span style="font-size:10px;color:var(--muted);">(${list.length} anggota)</span></div>
-      <div class="card table-wrap" style="padding:0;"><table style="width:100%;border-collapse:collapse;font-size:11.5px;">
-      <thead><tr style="background:var(--bg,#f4f6fa);"><th style="padding:9px 8px;">No</th><th style="padding:9px 8px;text-align:left;">Nama Lengkap</th><th style="padding:9px 8px;text-align:left;">Pilihan Status</th><th style="padding:9px 8px;text-align:left;">Status Kehadiran</th></tr></thead>
-      <tbody>${rows}</tbody></table></div>`;
+
+  // Struktur utama: ANGKATAN -> LAKI-LAKI -> PEREMPUAN.
+  // Dengan demikian beberapa angkatan tidak pernah tercampur dalam satu daftar.
+  const grouped={};
+  members.forEach(a=>{
+    const key=(a.angkatan==null||String(a.angkatan).trim()==='')?'__belum__':String(a.angkatan);
+    (grouped[key] ||= []).push(a);
+  });
+  const angkatanKeys=Object.keys(grouped)
+    .filter(k=>k!=='__belum__')
+    .sort((a,b)=>{
+      const na=Number(a),nb=Number(b);
+      if(Number.isFinite(na)&&Number.isFinite(nb)&&na!==nb) return nb-na;
+      return b.localeCompare(a,'id');
+    });
+  if(grouped.__belum__) angkatanKeys.push('__belum__');
+
+  const angkatanSections=angkatanKeys.map(key=>{
+    const list=grouped[key]||[];
+    const laki=list.filter(a=>genderAbsensiNorm(a)==='L').sort((a,b)=>String(a.nama||'').localeCompare(String(b.nama||''),'id'));
+    const perempuan=list.filter(a=>genderAbsensiNorm(a)==='P').sort((a,b)=>String(a.nama||'').localeCompare(String(b.nama||''),'id'));
+    const belum=list.filter(a=>genderAbsensiNorm(a)!=='L'&&genderAbsensiNorm(a)!=='P').sort((a,b)=>String(a.nama||'').localeCompare(String(b.nama||''),'id'));
+    const title=key==='__belum__'?'⚠️ ANGKATAN BELUM DIISI':`📌 ANGKATAN ${esc(key)}`;
+
+    const genderTable=(arr,gender,label,icon)=>{
+      if(!arr.length) return '';
+      const rows=arr.map((a,i)=>{
+        const val=draft[a.id]||'';
+        const buttons=manualStatusList().map(([v,txt])=>`<button class="manual-status-btn ${val===v?'active':''}" ${locked?'disabled':''} onclick="setManualStatus('${sesi.id}','${a.id}','${v}')">${txt}</button>`).join('');
+        return `<tr style="border-top:1px solid var(--line);">
+          <td style="padding:8px;width:38px;">${i+1}</td>
+          <td style="padding:8px;font-weight:700;min-width:180px;">${esc(a.nama||'-')}</td>
+          <td style="padding:8px;min-width:230px;"><div class="manual-status-grid">${buttons}</div></td>
+          <td style="padding:8px;white-space:nowrap;">${val?absenStatusBadge(val):'<span style="color:var(--muted);">Belum dipilih</span>'}</td>
+        </tr>`;
+      }).join('');
+      return `<div style="margin:0 0 10px;">
+        <div style="font-weight:900;font-size:12px;padding:8px 10px;background:var(--bg,#f4f6fa);border-bottom:1px solid var(--line);">${icon} ${label.toUpperCase()} <span style="font-size:10px;color:var(--muted);">(${arr.length} anggota)</span></div>
+        <div class="table-wrap"><table style="width:100%;border-collapse:collapse;font-size:11.5px;">
+          <thead><tr><th style="padding:9px 8px;text-align:left;">No</th><th style="padding:9px 8px;text-align:left;">Nama Lengkap</th><th style="padding:9px 8px;text-align:left;">Pilihan Status</th><th style="padding:9px 8px;text-align:left;">Status Kehadiran</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table></div>
+      </div>`;
+    };
+
+    return `<div class="card" style="padding:0;overflow:hidden;margin-bottom:14px;">
+      <div style="padding:11px 12px;background:var(--navy);color:#fff;font-weight:950;font-size:13px;">${title} <span style="font-size:10px;font-weight:700;opacity:.85;">(${list.length} anggota)</span></div>
+      <div style="padding:8px;">
+        ${genderTable(laki,'L','Laki-Laki','👨')}
+        ${genderTable(perempuan,'P','Perempuan','👩')}
+        ${genderTable(belum,'U','Jenis Kelamin Belum Diisi','⚪')}
+      </div>
+    </div>`;
   }).join('');
 
-  const now=new Date();
   const isWithin24=manualEditMasihBoleh(sesi);
-  const statusText=locked?'🔒 Data sudah disimpan — tombol EDIT ABSEN tetap tersedia sampai 24 jam sejak absen dibuat.':'🟢 Absen sedang diisi — tekan SELESAI & SIMPAN jika semua status sudah benar.';
+  const statusText=locked?'🔒 Data sudah disimpan — tombol EDIT ABSEN tetap tersedia sampai 24 jam sejak absen dibuat.':'🟢 Absen sedang diisi — setiap perubahan status langsung disimpan dan dapat dilihat Sekretaris/Admin lain.';
   document.getElementById('kelola-absen-mode-content').innerHTML=`
     <div class="card">
       <div style="font-weight:800;font-size:13px;">📝 ${esc(sesi.keterangan||'-')}</div>
@@ -3908,17 +3969,45 @@ function renderManualSession(sesi){
       <div class="manual-edit-window ${isWithin24?'open':''}">${statusText}<br>${isWithin24?'✏️ Batas EDIT ABSEN: '+manualEditDeadline(sesi):'🔒 Batas 24 jam telah lewat; absensi tidak dapat diedit lagi.'}</div>
       ${locked?'<div class="manual-locked">🔒 Pengisian utama sudah disimpan. Perubahan setelah ini hanya melalui tombol EDIT ABSEN di Daftar Hadir dan hanya sampai 24 jam.</div>':''}
     </div>
-    <div class="section-title">Daftar Hadir — Hanya Angkatan Terpilih</div>
-    ${genderSections||'<div class="empty-state">Belum ada anggota dari angkatan yang dipilih.</div>'}
+    <div class="section-title">Daftar Hadir Manual</div>
+    <div class="hint-box">Struktur daftar: <b>Angkatan → Laki-Laki → Perempuan</b>. Jadi Angkatan 22, 21, 20, dan seterusnya selalu terpisah. Status yang dipilih juga langsung tersimpan ke data bersama agar beberapa Sekretaris dapat mengatur absensi yang sama.</div>
+    ${angkatanSections||'<div class="empty-state">Belum ada anggota dari angkatan yang dipilih.</div>'}
     ${locked ? '' : `<button class="btn-primary" style="width:100%;margin-top:10px;" onclick="selesaiSimpanAbsenManual('${sesi.id}')">✅ SELESAI & SIMPAN ABSEN</button>
     <button class="btn-outline" style="width:100%;margin-top:8px;" onclick="tutupSesiManualSekarang('${sesi.id}')">⏹ TUTUP ABSEN MANUAL SEKARANG</button>`}
     ${locked && isWithin24 ? `<button class="btn-outline" style="width:100%;margin-top:10px;" onclick="navigate('daftar-hadir')">📋 BUKA DAFTAR HADIR UNTUK EDIT</button>` : ''}
   `;
   startManualLiveClock();
 }
-function setManualStatus(sesiId,anggotaId,status){
-  const s=getSesiById(sesiId); if(!s||s.locked||!canManageAbsensi()) return;
-  ManualAbsenState.sesiId=sesiId; manualDraftFor(s); ManualAbsenState.draft[anggotaId]=status; renderManualSession(s);
+async function setManualStatus(sesiId,anggotaId,status){
+  if(!canManageAbsensi()) return;
+  // Ambil data terbaru dulu agar Sekretaris 1, 2, dst. bekerja pada data bersama.
+  await syncAbsensiShared();
+  const s=getSesiById(sesiId), a=(DB.anggota||[]).find(x=>x.id===anggotaId);
+  if(!s||!isManualSesi(s)||s.locked||!a) return;
+  if(!sudahLewatTutup(s) && !s.locked) {
+    const now=new Date(), nowIso=now.toISOString();
+    DB.absensi=DB.absensi||[];
+    let r=DB.absensi.find(x=>x.sesiId===s.id&&x.anggotaId===a.id);
+    if(!r){
+      r={id:uid(),sesiId:s.id,anggotaId:a.id,nama:a.nama,angkatan:a.angkatan||null,jabatan:a.jabatan||'Anggota Biasa',
+        tanggal:s.tanggal,waktu:s.jamMulai||localTimeStr(now),status,keterangan:'',approval:'Disetujui',oleh:session.nama,
+        disetujuiOleh:session.nama,waktuPersetujuan:nowIso,diubahOleh:null,waktuUbah:null};
+      DB.absensi.push(r);
+    }else{
+      r.status=status;
+      r.approval='Disetujui';
+      r.diubahOleh=session.nama;
+      r.waktuUbah=nowIso;
+      r.disetujuiOleh=r.disetujuiOleh||session.nama;
+      r.waktuPersetujuan=r.waktuPersetujuan||nowIso;
+    }
+    await save('absensi');
+    // Draft lokal juga diperbarui agar tombol yang dipilih langsung terlihat aktif.
+    ManualAbsenState.sesiId=sesiId;
+    manualDraftFor(s);
+    ManualAbsenState.draft[anggotaId]=status;
+    renderManualSession(s);
+  }
 }
 async function tutupSesiManualSekarang(sesiId){
   if(!canManageAbsensi()) return;
@@ -6431,9 +6520,9 @@ function openAnggotaForm(id){
     if(f.jabatanUtama && JABATAN_UTAMA_LIST.includes(f.jabatanUtama)) f.jabatan=f.jabatanUtama;
     if(f.jabatanTambahan===undefined) delete f.jabatanTambahan;
     delete f.username; delete f.password;
+    const newProfileId=f._newId||null; delete f._newId;
     let anggotaId = a ? a.id : (newProfileId || uid());
     const oldProfilePhotoUrl=a ? (a.foto||'') : '';
-    const newProfileId=f._newId||null; delete f._newId;
     if(a){ Object.assign(a, f); }
     else { DB.anggota.unshift({id:anggotaId, ...f, joined:new Date().toISOString().slice(0,10), ekta:false, noKta:null, ektaTglMulai:null, ektaTglBerakhir:null, ektaDicabut:false, ektaRiwayat:[]}); }
     if(username){
