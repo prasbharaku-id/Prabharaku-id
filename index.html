@@ -3361,21 +3361,31 @@ function renderDaftarHadir(){
 
   document.getElementById('content').innerHTML=
     `<div class="section-title">Daftar Hadir</div>
-     <div class="card">
-       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-         <div><div style="font-size:10px;color:var(--muted);">Nama Kegiatan</div><div style="font-weight:800;font-size:12px;">${esc(selected?.keterangan||'-')}</div></div>
-         <div><div style="font-size:10px;color:var(--muted);">Tanggal/Bulan/Tahun</div><div style="font-weight:800;font-size:12px;">${selected?fmtDate(selected.tanggal):'-'}</div></div>
+     <div class="card" style="padding:10px 12px;">
+       <button class="btn-outline" style="width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;text-align:left;padding:11px 12px;border-radius:10px;font-weight:800;" onclick="toggleDaftarTanggalKegiatan()">
+         <span>📅 PILIH TANGGAL & KEGIATAN</span><span id="dh-toggle-icon">▾</span>
+       </button>
+       <div style="margin-top:8px;padding:10px 11px;border:1px solid var(--line);border-radius:10px;background:var(--bg,#f4f6fa);">
+         <div style="font-size:10px;color:var(--muted);">ABSEN YANG DIPILIH</div>
+         <div style="font-weight:800;font-size:12.5px;margin-top:2px;">${esc(selected?.keterangan||'Belum ada absen dipilih')}</div>
+         <div style="font-size:11px;color:var(--muted);margin-top:3px;">${selected?`📅 ${fmtDate(selected.tanggal)} · ${esc(selected.mode==='manual'?'📝 Absen Manual':'📷 Absen Online')}`:'Pilih salah satu tanggal/kegiatan di bawah.'}</div>
+         ${selected&&isManualSesi(selected)?`<div style="font-size:11px;color:var(--muted);margin-top:5px;">🕒 Mulai: <b>${esc(selected.jamMulai||'-')}</b> · Selesai: <b>${esc(selected.jamSelesai||'-')}</b></div>${windowInfo}`:''}
        </div>
-       ${selected&&isManualSesi(selected)?`<div style="font-size:11px;color:var(--muted);margin-top:8px;">🕒 Mulai: <b>${esc(selected.jamMulai||'-')}</b> · Selesai: <b>${esc(selected.jamSelesai||'-')}</b></div>${windowInfo}`:''}
-       <button class="btn-outline" style="width:100%;margin-top:10px;" onclick="document.getElementById('dh-all').style.display=document.getElementById('dh-all').style.display==='none'?'block':'none'">🔍 Lihat Semua Absen</button>
-     </div>
-     <div id="dh-all" style="display:block;">
-       <div class="section-title">Daftar Tanggal & Kegiatan</div>
-       <div class="card" style="padding:6px 12px;">${rows}</div>
+       <div id="dh-all" style="display:none;margin-top:10px;">
+         <div style="font-size:11px;font-weight:800;color:var(--muted);margin:0 2px 6px;">DAFTAR TANGGAL & KEGIATAN</div>
+         <div style="padding:6px 0;">${rows}</div>
+       </div>
      </div>
      ${selected?`<div class="section-title">${esc(selected.keterangan||'-')} — ${fmtDate(selected.tanggal)}</div>
        <div class="search-bar"><input id="dh-search" value="${esc(DaftarHadirState.search||'')}" placeholder="Cari nama atau angkatan…" oninput="filterDaftarHadirRows()"></div>
        <div id="daftar-hadir-results">${table}</div>${rekapAbsensiHtml(list)}<button class="btn-outline" style="width:100%;margin-top:4px;" onclick="kembaliDaftarHadir()">← Kembali</button>`:'<div class="empty-state">Pilih tanggal untuk melihat daftar hadir.</div>'}`;
+}
+function toggleDaftarTanggalKegiatan(){
+  const box=document.getElementById('dh-all'), icon=document.getElementById('dh-toggle-icon');
+  if(!box) return;
+  const open=box.style.display!=='none';
+  box.style.display=open?'none':'block';
+  if(icon) icon.textContent=open?'▾':'▴';
 }
 function pilihSesiDaftarHadir(id){ DaftarHadirState.sesiTerpilih=id; renderDaftarHadir(); }
 function kembaliDaftarHadir(){ DaftarHadirState.sesiTerpilih=null; renderDaftarHadir(); }
@@ -3466,9 +3476,27 @@ function daftarTanggalKegiatanHtml(list){
   (list||[]).forEach(r=>{const sid=r.sesiId||'__tanpa_sesi__';(groups[sid] ||= []).push(r);});
   const keys=Object.keys(groups).sort((a,b)=>{const sa=a==='__tanpa_sesi__'?null:getSesiById(a),sb=b==='__tanpa_sesi__'?null:getSesiById(b);return String((sb&&sb.tanggal)||groups[b][0]?.tanggal||'').localeCompare(String((sa&&sa.tanggal)||groups[a][0]?.tanggal||''));});
   if(!keys.length) return '<div class="card"><div class="empty-state">Belum ada tanggal/kegiatan.</div></div>';
-  return `<div class="card" style="margin-bottom:12px;"><div style="font-weight:900;font-size:12.5px;margin-bottom:8px;">📋 Daftar Tanggal &amp; Kegiatan</div><div style="display:grid;gap:7px;">${keys.map((sid,i)=>{const s=sid==='__tanpa_sesi__'?null:getSesiById(sid),r=groups[sid][0];const t=(s&&s.tanggal)||r?.tanggal||'-',k=(s&&s.keterangan)||'-';return `<button type="button" class="btn-outline" style="width:100%;text-align:left;padding:9px 10px;" onclick="pilihHasilAbsenSesi('${esc(sid)}')">${i+1}. 📅 ${esc(t?fmtDate(t):'-')} — 📝 ${esc(k)} <span style="float:right;">${groups[sid].length} data</span></button>`;}).join('')}</div><button type="button" class="btn-primary" style="width:100%;margin-top:8px;" onclick="pilihHasilAbsenSesi('SEMUA')">📚 Tampilkan Semua Hasil</button></div>`;
+  const selectedId=window._absenHasilSesiFilter||'SEMUA';
+  const selected=selectedId==='SEMUA'?null:(selectedId==='__tanpa_sesi__'?null:getSesiById(selectedId));
+  const selectedRows=selectedId==='SEMUA'?null:groups[selectedId];
+  const selectedDate=selected?.tanggal || selectedRows?.[0]?.tanggal || '';
+  const selectedActivity=selected?.keterangan || (selectedRows?.[0]?.sesiId?getSesiById(selectedRows[0].sesiId)?.keterangan:null) || '-';
+  const pickerOpen=!!window._absenHasilSesiPickerOpen;
+  const summary=selectedId==='SEMUA'
+    ? `📚 Semua Hasil Absen <span style="font-weight:700;color:var(--muted);">(${(list||[]).length} data)</span>`
+    : `📅 ${esc(selectedDate?fmtDate(selectedDate):'-')} · 📝 ${esc(selectedActivity)} <span style="font-weight:700;color:var(--muted);">(${(selectedRows||[]).length} data)</span>`;
+  return `<div class="card" style="margin-bottom:12px;padding:10px 12px;">
+    <button type="button" class="btn-outline" style="width:100%;text-align:left;padding:10px 11px;display:flex;align-items:center;justify-content:space-between;gap:8px;font-weight:900;" onclick="window._absenHasilSesiPickerOpen=!window._absenHasilSesiPickerOpen;renderAdminAbsenOnline();">
+      <span>📋 Daftar Tanggal &amp; Kegiatan</span><span style="font-size:12px;">${pickerOpen?'▲':'▼'}</span>
+    </button>
+    <div style="font-size:10.5px;color:var(--muted);margin-top:6px;padding:0 3px;">${summary}</div>
+    ${pickerOpen?`<div style="display:grid;gap:7px;margin-top:9px;max-height:300px;overflow:auto;padding-right:2px;">
+      ${keys.map((sid,i)=>{const s=sid==='__tanpa_sesi__'?null:getSesiById(sid),r=groups[sid][0];const t=(s&&s.tanggal)||r?.tanggal||'-',k=(s&&s.keterangan)||'-';const active=sid===selectedId;return `<button type="button" class="btn-outline" style="width:100%;text-align:left;padding:9px 10px;${active?'border:2px solid var(--navy);font-weight:900;':''}" onclick="pilihHasilAbsenSesi('${esc(sid)}')">${i+1}. 📅 ${esc(t?fmtDate(t):'-')} — 📝 ${esc(k)} <span style="float:right;">${groups[sid].length} data</span></button>`;}).join('')}
+    </div>
+    <button type="button" class="btn-primary" style="width:100%;margin-top:8px;" onclick="pilihHasilAbsenSesi('SEMUA')">📚 Tampilkan Semua Hasil</button>`:''}
+  </div>`;
 }
-function pilihHasilAbsenSesi(sesiId){ window._absenHasilSesiFilter=sesiId||'SEMUA'; renderAdminAbsenOnline(); }
+function pilihHasilAbsenSesi(sesiId){ window._absenHasilSesiFilter=sesiId||'SEMUA'; window._absenHasilSesiPickerOpen=false; renderAdminAbsenOnline(); }
 /* ---------------- ADMIN & SEKRETARIS: Kelola Absensi (buka sesi berkali-kali, setujui, ubah) ---------------- */
 let absensiSyncTimer=null;
 async function syncAbsensiShared(){
@@ -3505,7 +3533,6 @@ function renderAdminAbsen(){
     <div class="section-title">Kelola Absensi</div>
     <div class="absen-mode-tabs">
       <button class="absen-mode-tab ${activeMode==='online'?'active':''}" id="mode-online" onclick="switchKelolaAbsensiMode('online')" ${activeMode==='manual'?'disabled':''}>📷 Absen Online ${activeMode==='online'?'<span style="font-size:9.5px;opacity:.9;">(sedang aktif)</span>':''}</button>
-      ${activeMode ? `<button class="btn-danger" style="flex:0 0 auto;min-width:170px;padding:10px 14px;border-radius:10px;font-weight:900;font-size:11.5px;white-space:nowrap;" onclick="tutupSesiSekarang('${getSesiAktif()?.id||''}')">🔒 TUTUP ABSEN AKTIF</button>` : ''}
       <button class="absen-mode-tab ${activeMode==='manual'?'active':''}" id="mode-manual" onclick="switchKelolaAbsensiMode('manual')" ${activeMode==='online'?'disabled':''}>📝 Absen Manual ${activeMode==='manual'?'<span style="font-size:9.5px;opacity:.9;">(sedang aktif)</span>':''}</button>
     </div>
     <div id="kelola-absen-mode-content"></div>
