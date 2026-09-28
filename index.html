@@ -3505,6 +3505,7 @@ function renderAdminAbsen(){
     <div class="section-title">Kelola Absensi</div>
     <div class="absen-mode-tabs">
       <button class="absen-mode-tab ${activeMode==='online'?'active':''}" id="mode-online" onclick="switchKelolaAbsensiMode('online')" ${activeMode==='manual'?'disabled':''}>📷 Absen Online ${activeMode==='online'?'<span style="font-size:9.5px;opacity:.9;">(sedang aktif)</span>':''}</button>
+      ${activeMode ? `<button class="btn-danger" style="flex:0 0 auto;min-width:170px;padding:10px 14px;border-radius:10px;font-weight:900;font-size:11.5px;white-space:nowrap;" onclick="tutupSesiSekarang('${getSesiAktif()?.id||''}')">🔒 TUTUP ABSEN AKTIF</button>` : ''}
       <button class="absen-mode-tab ${activeMode==='manual'?'active':''}" id="mode-manual" onclick="switchKelolaAbsensiMode('manual')" ${activeMode==='online'?'disabled':''}>📝 Absen Manual ${activeMode==='manual'?'<span style="font-size:9.5px;opacity:.9;">(sedang aktif)</span>':''}</button>
     </div>
     <div id="kelola-absen-mode-content"></div>
