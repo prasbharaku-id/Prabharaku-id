@@ -216,6 +216,16 @@
   .quick-ic{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;color:#fff;}
   .quick-item span{font-size:9.5px;text-align:center;font-weight:600;color:var(--text);line-height:1.2;}
 
+  /* ---------- Menu INFORMASI ---------- */
+  .informasi-card{background:#fff;border-radius:16px;padding:14px;box-shadow:0 2px 10px rgba(20,30,60,.05);}
+  .informasi-menu-wrap{display:flex;gap:10px;overflow-x:auto;padding:2px 2px 7px;scrollbar-width:thin;-webkit-overflow-scrolling:touch;}
+  .informasi-menu-item{flex:0 0 116px;min-height:92px;border:1px solid var(--line);background:#fff;border-radius:13px;padding:11px 8px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;font-weight:800;font-size:10.5px;color:var(--text);box-shadow:0 2px 7px rgba(20,30,60,.05);}
+  .informasi-menu-item:active{transform:scale(.98);background:#f7f8fb;}
+  .informasi-menu-item .info-ic{width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:17px;}
+  .informasi-menu-item span:last-child{text-align:center;line-height:1.25;}
+  .tutup-absen-btn{width:100%;margin-top:8px;padding:12px;border-radius:10px;background:var(--red);color:#fff;font-size:13px;font-weight:800;box-shadow:0 5px 12px rgba(200,30,30,.22);}
+  .tutup-absen-btn:active{opacity:.85;}
+
   /* Cards generic */
   .card{background:#fff;border-radius:14px;padding:14px;box-shadow:0 2px 10px rgba(20,30,60,.05);margin-bottom:12px;}
   .list-item{display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);}
@@ -1241,6 +1251,20 @@ async function uploadProfilePhoto(entityId, file){
 }
 
 function esc(s){ return (s==null?'':String(s)).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+// Normalisasi pencarian: spasi saat mengetik tetap dibiarkan di input,
+// tetapi dibandingkan secara konsisten agar nama lengkap dengan spasi tetap ditemukan.
+function normalizeSearchText(value){
+  return String(value==null?'':value)
+    .toLocaleLowerCase('id-ID')
+    .replace(/\s+/g,' ')
+    .trim();
+}
+function searchTextIncludes(haystack, query){
+  const q=normalizeSearchText(query);
+  return !q || normalizeSearchText(haystack).includes(q);
+}
+
 function fileToDataUrl(file, maxBytes){
   return new Promise((resolve,reject)=>{
     if(maxBytes && file.size>maxBytes){ reject(new Error('Ukuran file terlalu besar (maks '+Math.round(maxBytes/1024)+' KB). Gunakan mode "Tulis Langsung" atau kompres filenya.')); return; }
@@ -1722,15 +1746,9 @@ function buildDrawer(){
     ['absen','📷','Absen Saya'],
     ['daftar-hadir','📋','Daftar Hadir'],
     ['iuran','🪙','Iuran'],
-    ['krida','🛡️','4 Krida'],
-    ['berita','📢','Berita & Pengumuman'],
-    ['galeri','🖼️','Galeri Kegiatan'],
-    ['galeri-anggota','📤','Galeri Anggota'],
+    ['informasi','ℹ️','INFORMASI'],
     ['walkie','📻','Walkie-Talkie'],
-    ['jadwal','📅','Jadwal Kegiatan'],
     ['chat','💬','Pesan Grup'],
-    ['medsos','🌐','Media Sosial'],
-    ['surat-saya','✉️','Surat Saya'],
     ['kompas','🧭','Kompas'],
     ['akun','🔒','Pengaturan Akun'],
   ];
@@ -1750,7 +1768,6 @@ function buildDrawer(){
     ['admin-jadwal','🗓️','Kelola Jadwal'],
     ['admin-ekta','🎫','Kelola e-KTA'],
     ['admin-pengajuan','📥','Pengajuan Bergabung'],
-    ['admin-galeri-anggota','🖼️','Kelola Pengajuan Foto'],
     ['admin-walkie','📻','Pengaturan Walkie-Talkie'],
   ];
   // Menu khusus jabatan Bendahara & Sekretaris (role tetap "anggota").
@@ -1882,13 +1899,13 @@ function navigate(view, opts){
   window.scrollTo(0,0);
   const map = {
     dashboard:renderDashboard, profil:renderProfil, anggota:renderAnggotaList, ekta:renderEkta, qr:renderQRScanner,
+    informasi:renderInformasi,
     krida:renderKrida, berita:renderBerita, galeri:renderGaleri, jadwal:renderJadwal, chat:renderChat,
     absen:renderAbsenSaya, akun:renderUbahSandi, keluarga:renderKeluargaBesar, 'daftar-hadir':renderDaftarHadir,
     'admin-anggota':renderAdminAnggota, 'admin-berita':renderAdminBerita, 'admin-galeri':renderAdminGaleri,
     'admin-jadwal':renderAdminJadwal, 'admin-ekta':renderAdminEkta, 'admin-pengaturan':renderAdminPengaturan,
     'admin-absen':renderAdminAbsen, 'admin-angkatan':renderAdminAngkatan, 'admin-surat':renderAdminSurat, 'surat-saya':renderSuratSaya,
     'admin-akses':renderAdminAkses, 'admin-pengajuan':renderAdminPengajuan,
-    'galeri-anggota':renderGaleriAnggota, 'admin-galeri-anggota':renderAdminGaleriAnggota,
     walkie:renderWalkie, 'admin-walkie':renderAdminWalkie,
     medsos:renderMedsos, 'admin-medsos':renderAdminMedsos,
     kompas:renderKompas,
@@ -2144,10 +2161,7 @@ function renderDashboard(){
     ['profil','👤',var_blue(),'Profil Saya'],
     ['anggota','👥',var_green(),'Data Keanggotaan'],
     ['ekta','🪪',var_gold(),'e-KTA Digital'],
-    ['krida','🛡️',var_red(),'4 Krida'],
-    ['berita','📢',var_purple(),'Berita'],
-    ['galeri','🖼️','#1aa6b7','Galeri Kegiatan'],
-    ['jadwal','📅',var_blue(),'Jadwal Kegiatan'],
+    ['informasi','ℹ️',var_purple(),'INFORMASI'],
     ['chat','💬',var_green(),'Chat Anggota'],
     ['kompas','🧭',var_blue(),'Kompas'],
   ];
@@ -2373,17 +2387,65 @@ function renderAnggotaList(filterKrida){
   filterAnggotaList();
 }
 function setKridaFilter(k){ window._krFilter = k; renderAnggotaList(); }
+
 function filterAnggotaList(){
-  const q = (document.getElementById('anggota-search')?.value||'').toLowerCase();
+  const q = normalizeSearchText(document.getElementById('anggota-search')?.value||'');
   const kr = window._krFilter||'Semua';
-  const list = DB.anggota.filter(a=>a.status==='Aktif' && a.nama.toLowerCase().includes(q) && (kr==='Semua'||a.krida===kr));
+  const list = (Array.isArray(DB.anggota)?DB.anggota:[])
+    .filter(a=>a && String(a.status||'').toLowerCase()!=='nonaktif' && searchTextIncludes(a.nama,q) && (kr==='Semua'||a.krida===kr))
+    .slice()
+    .sort((a,b)=>{
+      const aa=Number(a.angkatan)||9999, bb=Number(b.angkatan)||9999;
+      if(aa!==bb) return aa-bb;
+      return normalizeSearchText(a.nama).localeCompare(normalizeSearchText(b.nama),'id-ID');
+    });
   const box = document.getElementById('anggota-list-box');
-  box.innerHTML = list.length ? list.map(a=>`
-    <div class="list-item" onclick="showAnggotaDetail('${a.id}')" style="cursor:pointer;">
-      ${avatarHtml(a, 52)}
-      <div><div class="list-title">${esc(a.nama)}</div><div class="list-sub">${esc(a.krida)}</div><div class="list-sub">${esc(a.kelas)} · ${esc(a.sekolah)}</div></div>
-    </div>`).join('') : '<div class="empty-state">Tidak ada anggota ditemukan.</div>';
+  if(!list.length){ box.innerHTML='<div class="empty-state">Tidak ada anggota ditemukan.</div>'; return; }
+
+  const groups = [];
+  list.forEach(a=>{
+    const key=String(a.angkatan||'-');
+    let g=groups.find(x=>x.key===key);
+    if(!g){ g={key,items:[]}; groups.push(g); }
+    g.items.push(a);
+  });
+
+  box.innerHTML = groups.map(g=>`
+    <div style="padding:12px 12px 4px;border-bottom:1px solid var(--line);background:rgba(47,111,237,.045);">
+      <div style="font-weight:800;font-size:13px;color:var(--navy,#0B1F3A);">ANGKATAN ${esc(g.key)}</div>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:2px;">Tahun masuk ${esc(String(tahunMasukAngkatan(g.key)))}</div>
+    </div>
+    <div style="overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;min-width:620px;font-size:11.5px;">
+        <thead>
+          <tr style="background:var(--soft,#f7f8fb);">
+            <th style="padding:9px 8px;text-align:center;border-bottom:1px solid var(--line);width:42px;">No</th>
+            <th style="padding:9px 8px;text-align:left;border-bottom:1px solid var(--line);">Nama Lengkap</th>
+            <th style="padding:9px 8px;text-align:left;border-bottom:1px solid var(--line);">Jabatan</th>
+            <th style="padding:9px 8px;text-align:left;border-bottom:1px solid var(--line);">Jabatan Tambahan</th>
+            <th style="padding:9px 8px;text-align:left;border-bottom:1px solid var(--line);">Krida</th>
+            <th style="padding:9px 8px;text-align:center;border-bottom:1px solid var(--line);">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${g.items.map((a,i)=>{
+            const jabatanUtama=getJabatanUtama(a);
+            const jabatanTambahan=getJabatanTambahan(a);
+            return `<tr onclick="showAnggotaDetail('${esc(a.id)}')" style="cursor:pointer;">
+              <td style="padding:9px 8px;text-align:center;border-bottom:1px solid var(--line);vertical-align:top;">${i+1}</td>
+              <td style="padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:top;font-weight:700;">${esc(a.nama)}</td>
+              <td style="padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:top;">${esc(jabatanUtama)}</td>
+              <td style="padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:top;">${jabatanTambahan?esc(jabatanTambahan):'<span style="color:var(--muted);">-</span>'}</td>
+              <td style="padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:top;">${esc(a.krida||'-')}</td>
+              <td style="padding:9px 8px;text-align:center;border-bottom:1px solid var(--line);vertical-align:top;"><span style="font-size:10px;font-weight:700;">${esc(a.status||'-')}</span></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `).join('');
 }
+
 function showAnggotaDetail(id){
   const a = DB.anggota.find(x=>x.id===id); if(!a) return;
   const fotoHtml=a.foto ? `<div style="display:flex;justify-content:center;margin-bottom:12px;"><img src="${esc(a.foto)}" onclick="openProfileImageFullscreen('${esc(a.foto)}')" style="width:120px;height:120px;border-radius:50%;object-fit:cover;cursor:pointer;border:3px solid var(--line);"></div>` : `<div style="display:flex;justify-content:center;margin-bottom:12px;">${avatarHtml(a,120)}</div>`;
@@ -2435,7 +2497,7 @@ function kbRow(nama, sub, entityForAvatar, username, aktif, onclick){
   </div>`;
 }
 function renderKeluargaBesarList(){
-  const q = (document.getElementById('kb-search')?.value||'').toLowerCase().trim();
+  const q = normalizeSearchText(document.getElementById('kb-search')?.value||'');
   const passSearch = (nama, jabatan, angkatan)=>{
     if(!q) return true;
     return String(nama||'').toLowerCase().includes(q) || String(jabatan||'').toLowerCase().includes(q) || String(angkatan||'').includes(q);
@@ -3279,10 +3341,12 @@ function setupAbsensiInputStabilizer(){
 setupAbsensiInputStabilizer();
 
 function filterDaftarHadirRows(){
-  const q=(document.getElementById('dh-search')?.value||'').trim().toLowerCase();
-  DaftarHadirState.search=q;
+  const input=document.getElementById('dh-search');
+  const raw=input ? String(input.value||'') : '';
+  DaftarHadirState.search=raw;
+  const q=normalizeSearchText(raw);
   document.querySelectorAll('#daftar-hadir-results tr[data-search]').forEach(tr=>{
-    const hay=(tr.getAttribute('data-search')||'').toLowerCase();
+    const hay=normalizeSearchText(tr.getAttribute('data-search')||'');
     tr.style.display=!q||hay.includes(q)?'':'none';
   });
 }
@@ -3528,12 +3592,43 @@ function startAbsensiSync(){
 }
 function stopAbsensiSync(){ if(absensiSyncTimer){clearInterval(absensiSyncTimer);absensiSyncTimer=null;} }
 
+function renderTutupAbsenAktifControl(){
+  const sesiAktif = getSesiAktif();
+  const sesiTerbuka = (DB.absensiSesi || []).find(s =>
+    s && sudahMulai(s) && !s.locked && !s.ditutupManual && !s.waktuDisimpan && !s.waktuSelesai
+  ) || null;
+  const sesi = sesiAktif || sesiTerbuka;
+  const aktif = !!sesi;
+  return `
+    <div class="card" style="margin:10px 0 12px;text-align:center;border:1px solid var(--line);">
+      <div style="font-weight:900;font-size:14px;">🔒 TUTUP ABSEN AKTIF &amp; SIMPAN</div>
+      ${sesi ? `
+        <div style="font-size:11.5px;color:#b91c1c;margin-top:6px;font-weight:800;">
+          🔴 Ada absen yang masih aktif/terbuka
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:3px;">
+          📅 ${fmtDate(sesi.tanggal)} · 🕒 ${esc(sesi.jamMulai||'-')} – ${esc(sesi.jamSelesai||'-')} · 📝 ${esc(sesi.keterangan||'-')}
+        </div>
+      ` : `
+        <div style="font-size:11.5px;color:var(--muted);margin-top:6px;">
+          🟢 Tidak ada absen aktif saat ini. Tombol akan bisa digunakan otomatis jika ada absen yang sedang berjalan.
+        </div>
+      `}
+      <button class="tutup-absen-btn" ${aktif ? `onclick="selesaiSimpanSesiAktif('${sesi.id}')"` : 'disabled'} style="margin-top:9px;width:100%;max-width:520px;">
+        🔒 TUTUP ABSEN AKTIF &amp; SIMPAN
+      </button>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:6px;">
+        ${aktif ? 'Klik tombol ini untuk menghentikan dan menyimpan absen aktif sekarang.' : 'Tombol tetap tersedia, tetapi tidak berfungsi sampai ada absen aktif.'}
+      </div>
+    </div>`;
+}
 function renderAdminAbsen(){
   if(!canManageAbsensi()){ document.getElementById('content').innerHTML = '<div class="empty-state">Anda tidak memiliki akses ke halaman ini.</div>'; return; }
   const activeMode=getKelolaAbsensiActiveMode();
   const firstMode=activeMode || window._kelolaAbsenMode || 'online';
   document.getElementById('content').innerHTML = `
     <div class="section-title">Kelola Absensi</div>
+    ${renderTutupAbsenAktifControl()}
     <div class="absen-mode-tabs">
       <button class="absen-mode-tab ${activeMode==='online'?'active':''}" id="mode-online" onclick="switchKelolaAbsensiMode('online')" ${activeMode==='manual'?'disabled':''}>📷 Absen Online ${activeMode==='online'?'<span style="font-size:9.5px;opacity:.9;">(sedang aktif)</span>':''}</button>
       <button class="absen-mode-tab ${activeMode==='manual'?'active':''}" id="mode-manual" onclick="switchKelolaAbsensiMode('manual')" ${activeMode==='online'?'disabled':''}>📝 Absen Manual ${activeMode==='manual'?'<span style="font-size:9.5px;opacity:.9;">(sedang aktif)</span>':''}</button>
@@ -3638,42 +3733,16 @@ function renderAdminAbsenOnline(){
   if(!canManageAbsensi()){ document.getElementById('content').innerHTML = '<div class="empty-state">Anda tidak memiliki akses ke halaman ini.</div>'; return; }
   ensureAlpaProcessed();
   const sesiAktif = getSesiAktif();
+  // Sesi yang masih terbuka tetap dapat ditutup secara manual, termasuk
+  // sesi yang jamnya sudah lewat tetapi belum pernah disimpan/ditutup.
+  const sesiTerbuka = (DB.absensiSesi || []).find(s =>
+    s && sudahMulai(s) && !s.locked && !s.ditutupManual && !s.waktuDisimpan && !s.waktuSelesai
+  ) || null;
+  const sesiUntukTutup = sesiAktif || sesiTerbuka;
   const pending = DB.absensi.filter(r=>r.approval==='Menunggu Persetujuan').sort((x,y)=>{ const ax=x.angkatan==null?-1:Number(x.angkatan), ay=y.angkatan==null?-1:Number(y.angkatan); return ay-ax || String(x.nama||'').localeCompare(String(y.nama||''),'id'); });
   const semuaHasil = [...DB.absensi].filter(r=>r.approval!=='Menunggu Persetujuan').sort((x,y)=>new Date(y.tanggal+' '+(y.waktu||'00:00'))-new Date(x.tanggal+' '+(x.waktu||'00:00')));
   const filterSesi=window._absenHasilSesiFilter||'SEMUA';
   const hasil=filterSesi==='SEMUA'?semuaHasil:semuaHasil.filter(r=>(r.sesiId||'__tanpa_sesi__')===filterSesi);
-
-  let controlHtml;
-  if(sesiAktif){
-    controlHtml = `
-      <div class="card">
-        <div style="font-weight:800;font-size:13px;">🔴 Absen Sedang Berlangsung</div>
-        <div style="font-size:11.5px;color:var(--muted);margin-top:4px;">📅 ${fmtDate(sesiAktif.tanggal)} · 🕒 ${esc(sesiAktif.jamMulai)} – ${esc(sesiAktif.jamSelesai)} · dibuka oleh ${esc(sesiAktif.dibukaOleh)}</div>
-        <div style="font-size:11.5px;margin-top:2px;">📝 Kegiatan: ${esc(sesiAktif.keterangan||'-')}</div>
-        <div style="font-size:11.5px;margin-top:3px;">👥 Target: ${labelAngkatanTarget(sesiAktif)}</div>
-        <button class="btn-primary" style="width:100%;margin-top:10px;" onclick="selesaiSimpanSesiAktif('${sesiAktif.id}')">✅ SELESAI & SIMPAN ABSEN</button>
-      </div>
-      ${kelolaAbsensiAktifHtml(sesiAktif)}`;
-  } else {
-    const tglDefault = todayStr();
-    controlHtml = `
-      <div class="card">
-        <div style="font-weight:800;font-size:13px;margin-bottom:8px;">Buka Absen</div>
-        <div class="field"><label>Tanggal Absen</label><input type="date" id="absen-tanggal" value="${esc(tglDefault)}"></div>
-        <div class="field"><label>Jam Mulai Absen</label><input type="time" id="absen-jam-mulai" value="08:00"></div>
-        <div class="field"><label>Jam Tutup Absen</label><input type="time" id="absen-jam-selesai" value="09:00"></div>
-        <div class="field"><label>Angkatan yang Boleh Absen</label>
-          <div id="absen-angkatan-pilihan" style="display:flex;flex-wrap:wrap;gap:7px;padding:2px 0;">
-            ${getAngkatanList().sort((a,b)=>b-a).map(n=>`<label style="display:flex;align-items:center;gap:5px;border:1px solid var(--line);border-radius:9px;padding:7px 9px;font-size:11.5px;font-weight:700;cursor:pointer;">
-              <input type="checkbox" class="absen-angkatan-cb" value="${n}"> Angkatan ${n}
-            </label>`).join('')}
-          </div>
-          <div style="font-size:10px;color:var(--muted);margin-top:5px;">Pilih minimal satu angkatan. Bisa pilih 1 saja (contoh: 22) atau beberapa sekaligus.</div>
-        </div>
-        <div class="field"><label>Keterangan Absen (Nama Kegiatan)</label><input type="text" id="absen-keterangan" value="${esc(absensiKeteranganDraft||'')}" autocomplete="off" spellcheck="false" placeholder="Contoh: Latihan Rutin Saka Bhayangkara" oninput="absensiKeteranganDraft=this.value"></div>
-        <button class="btn-primary" style="width:100%;" onclick="mulaiAbsenBaru()">▶ Mulai Absen</button>
-      </div>`;
-  }
 
   const pendingHtml = pending.length ? `
     <div class="section-title">Menunggu Persetujuan (${pending.length})</div>
@@ -3695,7 +3764,6 @@ function renderAdminAbsenOnline(){
 
   const target = document.getElementById('kelola-absen-mode-content') || document.getElementById('content');
   target.innerHTML = `
-    ${controlHtml}
     ${pendingHtml}
     <div class="section-title">Hasil Absen</div>
     ${daftarTanggalKegiatanHtml(semuaHasil)}
@@ -3764,6 +3832,13 @@ async function selesaiSimpanSesiAktif(id){
 }
 async function tutupSesiSekarang(id){
   return selesaiSimpanSesiAktif(id);
+}
+async function tutupAbsenAktifAdmin(){
+  if(!canManageAbsensi()){ toast('⚠️ Hanya Admin/Sekretaris yang dapat menutup absen.'); return; }
+  await syncAbsensiShared();
+  const aktif=getSesiAktif();
+  if(!aktif){ toast('Tidak ada absen aktif yang sedang berjalan.'); renderAdminAbsen(); return; }
+  await selesaiSimpanSesiAktif(aktif.id);
 }
 async function setujuiSatuAbsen(id){
   if(!canManageAbsensi()) return;
@@ -4357,6 +4432,33 @@ async function doChangePassword(){
 }
 
 /* ---------------- Berita ---------------- */
+
+function renderInformasi(){
+  const items = [
+    ['berita','📰','#7b4fd6','Berita & Pengumuman'],
+    ['galeri','🖼️','#1aa6b7','Galeri Kegiatan'],
+    ['jadwal','📅','#2f6fed','Jadwal Kegiatan'],
+    ['surat-saya','✉️','#28a745','Surat Saya'],
+    ['medsos','🌐','#c81e1e','Media Sosial'],
+    ['krida','🛡️','#c81e1e','4 Krida'],
+  ];
+  document.getElementById('content').innerHTML = `
+    <div class="section-title"><span>ℹ️ INFORMASI</span></div>
+    <div class="informasi-card">
+      <div style="font-size:11.5px;color:var(--muted);line-height:1.5;margin-bottom:10px;">
+        Semua informasi aplikasi dikumpulkan di sini agar menu utama tetap rapi. Pilih salah satu menu di bawah.
+      </div>
+      <div class="informasi-menu-wrap">
+        ${items.map(([view,ic,bg,label])=>`
+          <button type="button" class="informasi-menu-item" onclick="navigate('${view}')">
+            <span class="info-ic" style="background:${bg};">${ic}</span>
+            <span>${label}</span>
+          </button>`).join('')}
+      </div>
+    </div>
+  `;
+}
+
 function renderBerita(){
   const list = [...DB.berita].sort((x,y)=>new Date(y.tanggal)-new Date(x.tanggal));
   document.getElementById('content').innerHTML = list.map(b=>`
@@ -4440,172 +4542,6 @@ document.addEventListener('DOMContentLoaded',()=>{
 });
 /* ---------------- Galeri Anggota (kirim foto + persetujuan admin) ---------------- */
 const GALERI_ANGGOTA_BUCKET = 'galeri-anggota';
-window._gaFiles = [];
-function renderGaleriAnggota(){
-  const approved = DB.galeriAnggota.filter(g=>g.status==='Disetujui')
-    .flatMap(g=>(g.fotos||[]).map(f=>({...f, nama:g.nama, tanggal:g.tanggal, keterangan:g.keterangan})))
-    .sort((a,b)=>new Date(b.tanggal)-new Date(a.tanggal));
-  const mine = DB.galeriAnggota.filter(g=>g.username===session.username).sort((a,b)=>new Date(b.tanggal)-new Date(a.tanggal));
-  document.getElementById('content').innerHTML = `
-    <button class="btn-primary" style="width:100%;" onclick="openKirimFotoModal()">📤 Kirim Foto</button>
-    ${mine.length ? `
-      <div class="section-title">Status Kiriman Saya</div>
-      <div class="card">
-        ${mine.map(g=>`
-          <div class="admin-row">
-            <div class="grow">
-              <div class="name">${(g.fotos||[]).length} foto · ${fmtDate(g.tanggal)}</div>
-              <div class="meta">${g.status==='Menunggu'?'⏳ Menunggu persetujuan':(g.status==='Disetujui'?'✅ Disetujui, sudah tampil di galeri':'❌ Ditolak'+(g.alasanTolak?(': '+esc(g.alasanTolak)):''))}</div>
-            </div>
-          </div>
-        `).join('')}
-      </div>
-    ` : ''}
-    <div class="section-title">Galeri Anggota</div>
-    <div class="card galeri-grid">
-      ${approved.length ? approved.map(f=>`<div><img src="${esc(f.url)}" style="width:100%;height:100px;object-fit:cover;border-radius:10px;cursor:pointer;" onclick="openImageFullscreen('${esc(f.url)}')"><div style="font-size:9.5px;color:var(--muted);margin-top:4px;">${esc(f.nama)} · ${fmtDate(f.tanggal)}</div></div>`).join('') : '<div class="empty-state">Belum ada foto yang disetujui.</div>'}
-    </div>
-  `;
-}
-function openKirimFotoModal(){
-  window._gaFiles = [];
-  openModal('Kirim Foto ke Galeri Anggota', `
-    <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px;">Pilih 1–10 foto sekaligus (JPG/PNG/WebP, maks 5MB per foto). Foto tampil di Galeri Anggota setelah disetujui admin.</div>
-    <input type="file" id="ga-file-input" accept="image/jpeg,image/png,image/webp" multiple onchange="handleGaFilesChange(event)">
-    <div id="ga-preview-grid" class="galeri-grid" style="margin-top:12px;"></div>
-    <div class="field" style="margin-top:12px;"><label>Keterangan (opsional)</label><textarea id="ga-keterangan" rows="2" placeholder="Contoh: Kegiatan Jumat bersih di Polsek Kalukku"></textarea></div>
-    <button class="btn-primary" style="width:100%;margin-top:10px;" id="ga-kirim-btn" onclick="kirimSemuaFotoAnggota()">Kirim Semua</button>
-  `, null, null);
-  renderGaPreview();
-}
-function handleGaFilesChange(ev){
-  const files = Array.from(ev.target.files || []);
-  const allowed = ['image/jpeg','image/png','image/webp'];
-  let msg = '';
-  for(const f of files){
-    if(window._gaFiles.length >= 10){ msg = 'Maksimal 10 foto sekaligus.'; break; }
-    if(!allowed.includes(f.type)){ msg = f.name+': format tidak didukung (harus JPG/PNG/WebP).'; continue; }
-    if(f.size > 5*1024*1024){ msg = f.name+': ukuran lebih dari 5MB.'; continue; }
-    window._gaFiles.push(f);
-  }
-  if(msg) toast(msg);
-  ev.target.value = '';
-  renderGaPreview();
-}
-function renderGaPreview(){
-  const box = document.getElementById('ga-preview-grid');
-  if(!box) return;
-  box.innerHTML = window._gaFiles.map((f,i)=>`
-    <div style="position:relative;">
-      <img src="${URL.createObjectURL(f)}" style="width:100%;height:90px;object-fit:cover;border-radius:8px;">
-      <div onclick="hapusGaPreview(${i})" style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,.6);color:#fff;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;cursor:pointer;">✕</div>
-    </div>
-  `).join('') || '<div class="empty-state" style="grid-column:1/-1;">Belum ada foto dipilih.</div>';
-}
-function hapusGaPreview(i){
-  window._gaFiles.splice(i,1);
-  renderGaPreview();
-}
-async function kirimSemuaFotoAnggota(){
-  const files = window._gaFiles;
-  if(!files.length){ toast('Pilih minimal 1 foto.'); return; }
-  const btn = document.getElementById('ga-kirim-btn');
-  btn.disabled = true; btn.textContent = 'Mengunggah...';
-  try{
-    const a = myAnggota();
-    const keterangan = document.getElementById('ga-keterangan').value.trim();
-    const fotos = [];
-    for(const f of files){
-      const ext = (f.name.split('.').pop()||'jpg').toLowerCase();
-      const path = session.username+'/'+Date.now()+'_'+Math.random().toString(36).slice(2,8)+'.'+ext;
-      const url = await window.FB.uploadToStorage(GALERI_ANGGOTA_BUCKET, path, f);
-      fotos.push({url, path});
-    }
-    DB.galeriAnggota.push({
-      id: uid(), username: session.username, nama: session.nama, angkatan: a?a.angkatan:null,
-      tanggal: new Date().toISOString().slice(0,10), keterangan, fotos,
-      status: 'Menunggu', alasanTolak: null
-    });
-    await save('galeriAnggota');
-    closeModal();
-    toast('Foto berhasil dikirim, menunggu persetujuan admin.');
-    renderGaleriAnggota();
-  }catch(e){
-    console.error(e);
-    toast('Gagal mengunggah foto. Periksa koneksi & coba lagi.');
-    btn.disabled = false; btn.textContent = 'Kirim Semua';
-  }
-}
-
-/* ---------------- ADMIN: Kelola Pengajuan Foto ---------------- */
-function renderAdminGaleriAnggota(){
-  if(!isPembina() && !isKetua()){ document.getElementById('content').innerHTML = '<div class="empty-state">Anda tidak memiliki akses ke halaman ini.</div>'; return; }
-  const menunggu = DB.galeriAnggota.filter(g=>g.status==='Menunggu').sort((a,b)=>new Date(a.tanggal)-new Date(b.tanggal));
-  const disetujui = DB.galeriAnggota.filter(g=>g.status==='Disetujui').sort((a,b)=>new Date(b.tanggal)-new Date(a.tanggal));
-  document.getElementById('content').innerHTML = `
-    <div class="section-title">⏳ Menunggu Persetujuan (${menunggu.length})</div>
-    <div class="card">
-      ${menunggu.length ? menunggu.map(g=>`
-        <div class="admin-row" style="align-items:flex-start;">
-          <div class="grow">
-            <div class="name">${esc(g.nama)} ${g.angkatan?('· Angkatan '+esc(String(g.angkatan))):''}</div>
-            <div class="meta">${fmtDate(g.tanggal)} · ${(g.fotos||[]).length} foto${g.keterangan?(' · '+esc(g.keterangan)):''}</div>
-            <div class="galeri-grid" style="margin-top:8px;">
-              ${(g.fotos||[]).map(f=>`<img src="${esc(f.url)}" style="width:100%;height:70px;object-fit:cover;border-radius:8px;cursor:pointer;" onclick="openImageFullscreen('${esc(f.url)}')">`).join('')}
-            </div>
-            <div style="display:flex;gap:8px;margin-top:8px;">
-              <button class="btn-primary" style="flex:1;padding:8px;font-size:12px;" onclick="setujuiFotoAnggota('${g.id}')">✅ Setujui</button>
-              <button class="btn-outline" style="flex:1;padding:8px;font-size:12px;" onclick="tolakFotoAnggota('${g.id}')">❌ Tolak</button>
-            </div>
-          </div>
-        </div>
-      `).join('') : '<div class="empty-state">Tidak ada kiriman menunggu persetujuan.</div>'}
-    </div>
-    <div class="section-title">✅ Sudah Disetujui</div>
-    <div class="card">
-      ${disetujui.length ? disetujui.map(g=>`
-        <div class="admin-row" style="align-items:flex-start;">
-          <div class="grow">
-            <div class="name">${esc(g.nama)}</div>
-            <div class="meta">${fmtDate(g.tanggal)} · ${(g.fotos||[]).length} foto${g.keterangan?(' · '+esc(g.keterangan)):''}</div>
-            <div class="galeri-grid" style="margin-top:8px;">
-              ${(g.fotos||[]).map((f,i)=>`<div style="position:relative;"><img src="${esc(f.url)}" style="width:100%;height:70px;object-fit:cover;border-radius:8px;cursor:pointer;" onclick="openImageFullscreen('${esc(f.url)}')"><div onclick="hapusFotoAnggotaTerkirim('${g.id}',${i})" style="position:absolute;top:3px;right:3px;background:rgba(0,0,0,.6);color:#fff;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;cursor:pointer;">🗑</div></div>`).join('')}
-            </div>
-          </div>
-        </div>
-      `).join('') : '<div class="empty-state">Belum ada foto yang disetujui.</div>'}
-    </div>
-  `;
-}
-async function setujuiFotoAnggota(id){
-  const g = DB.galeriAnggota.find(x=>x.id===id); if(!g) return;
-  g.status = 'Disetujui';
-  await save('galeriAnggota');
-  toast('Foto '+g.nama+' disetujui & tampil di Galeri Anggota.');
-  renderAdminGaleriAnggota();
-}
-async function tolakFotoAnggota(id){
-  const g = DB.galeriAnggota.find(x=>x.id===id); if(!g) return;
-  const alasan = prompt('Alasan penolakan (opsional):', '') || '';
-  g.status = 'Ditolak'; g.alasanTolak = alasan;
-  await save('galeriAnggota');
-  toast('Kiriman '+g.nama+' ditolak.');
-  renderAdminGaleriAnggota();
-}
-// Hanya admin/ketua yang bisa menghapus foto yang sudah disetujui —
-// anggota tidak diberi tombol hapus sama sekali di tampilan mereka.
-async function hapusFotoAnggotaTerkirim(gId, fotoIdx){
-  if(!confirm('Hapus foto ini dari Galeri Anggota?')) return;
-  const g = DB.galeriAnggota.find(x=>x.id===gId); if(!g) return;
-  const foto = g.fotos[fotoIdx];
-  if(foto && foto.path){ try{ await window.FB.deleteFromStorage(GALERI_ANGGOTA_BUCKET, foto.path); }catch(e){} }
-  g.fotos.splice(fotoIdx, 1);
-  if(!g.fotos.length){ DB.galeriAnggota = DB.galeriAnggota.filter(x=>x.id!==gId); }
-  await save('galeriAnggota');
-  toast('Foto dihapus.');
-  renderAdminGaleriAnggota();
-}
-
 /* ================================================================
    WALKIE-TALKIE (Bagian 3)
    ================================================================
@@ -4621,8 +4557,14 @@ async function hapusFotoAnggotaTerkirim(gId, fotoIdx){
 // ditanam permanen di HTML publik).
 const WA_ICE_SERVERS = [
   {urls:'stun:stun.l.google.com:19302'},
-  {urls:'stun:stun1.l.google.com:19302'}
+  {urls:'stun:stun1.l.google.com:19302'},
+  {urls:'stun:stun2.l.google.com:19302'},
+  {urls:'stun:stun.cloudflare.com:3478'}
 ];
+const WA_AUDIO_CONSTRAINTS = {
+  audio: {echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount:1},
+  video:false
+};
 let waRoom = null;          // {id, ch, peers:Map, localStream}
 let waCurrentSpeaker = null;
 let waTargetUsername = null; // null = siaran ke semua di saluran
@@ -4806,9 +4748,15 @@ async function walkieJoinChannel(channelId){
   if(!channel){ toast('Saluran tidak ditemukan.'); return; }
   let localStream;
   try{
-    localStream = await navigator.mediaDevices.getUserMedia({audio:true});
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ throw new Error('Browser HP ini tidak mendukung mikrofon WebRTC. Gunakan Chrome, Edge, Safari, atau Firefox versi terbaru melalui HTTPS.'); }
+    localStream = await navigator.mediaDevices.getUserMedia(WA_AUDIO_CONSTRAINTS);
   }catch(e){
-    toast('Izin mikrofon ditolak. Walkie-Talkie butuh akses mikrofon.');
+    console.error('Walkie getUserMedia:', e);
+    const msg = location.protocol!=='https:' && location.hostname!=='localhost'
+      ? 'Walkie-Talkie membutuhkan HTTPS agar mikrofon di HP dapat digunakan.'
+      : (e && e.name==='NotAllowedError' ? 'Izin mikrofon belum diberikan. Izinkan Mikrofon untuk situs ini lalu coba lagi.'
+        : 'Mikrofon tidak dapat digunakan di perangkat ini. Pastikan mikrofon tidak sedang dipakai aplikasi lain.');
+    toast(msg);
     return;
   }
   localStream.getAudioTracks().forEach(t=>t.enabled=false); // baru aktif saat ditekan
@@ -4925,7 +4873,10 @@ async function walkieRecoverConnection(){
 // lakukan pemulihan otomatis. Menutup tab/jendela tidak akan memanggil ini lagi
 // karena waRoom hilang dan proses browser sudah berakhir.
 document.addEventListener('visibilitychange', ()=>{
-  if(document.visibilityState==='visible') walkieRecoverConnectionSoon();
+  if(document.visibilityState==='visible'){ walkieRecoverConnectionSoon(); walkieUnlockRemoteAudio(); }
+});
+['touchstart','pointerdown','click'].forEach(evt=>{
+  document.addEventListener(evt, ()=>{ if(waRoom) walkieUnlockRemoteAudio(); }, {passive:true});
 });
 window.addEventListener('pageshow', ()=>walkieRecoverConnectionSoon());
 window.addEventListener('online', ()=>walkieRecoverConnectionSoon());
@@ -4982,6 +4933,10 @@ function walkieConnectToPeer(username, isInitiator){
     if(['failed','disconnected'].includes(pc.connectionState)){
       walkieRecoverConnectionSoon();
     }
+  };
+  pc.onnegotiationneeded = ()=>{
+    if(!isInitiator || !waRoom || waExplicitlyLeft) return;
+    if(pc.signalingState!=='stable' || entry.makingOffer) return;
   };
 
   pc.oniceconnectionstatechange = ()=>{
@@ -5137,7 +5092,7 @@ function walkiePlayRemoteStream(username, stream){
     audioEl.playsInline = true;
     audioEl.setAttribute('playsinline','');
     audioEl.setAttribute('webkit-playsinline','');
-    audioEl.style.cssText = 'position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;left:-10px;top:-10px;';
+    audioEl.style.cssText = 'position:fixed;width:1px;height:1px;opacity:0.01;pointer-events:none;left:-10px;top:-10px;';
     document.body.appendChild(audioEl);
 
     item = {audioEl, stream};
@@ -5340,9 +5295,10 @@ function walkieRenderLiveUI(){
       <div style="min-height:20px;font-size:12.5px;font-weight:700;color:${waCurrentSpeaker?'#146c2e':'var(--muted)'};">
         ${waCurrentSpeaker ? '🔊 '+esc(waCurrentSpeaker===session.username?'Kamu sedang bicara…':(DB.users.find(u=>u.username===waCurrentSpeaker)||{nama:waCurrentSpeaker}).nama+' sedang bicara…') : 'Saluran tenang'}
       </div>
-      <button type="button" onclick="walkieUnlockRemoteAudio()" style="width:100%;padding:10px 12px;border-radius:10px;background:#e8f8ee;color:#146c2e;border:1px solid #bfe9cd;font-weight:800;font-size:12px;margin-bottom:10px;">
+      <button type="button" onclick="walkieUnlockRemoteAudio()" style="width:100%;padding:10px 12px;border-radius:10px;background:#e8f8ee;color:#146c2e;border:1px solid #bfe9cd;font-weight:800;font-size:12px;margin-bottom:6px;">
         🔊 AKTIFKAN SUARA WALKIE
       </button>
+      <div style="font-size:10.5px;color:var(--muted);line-height:1.45;margin-bottom:8px;">Jika HP meminta izin, pilih <b>Izinkan Mikrofon</b>. Walkie-Talkie memerlukan HTTPS dan browser terbaru agar suara dapat terhubung.</div>
       <button
         id="wa-talk-btn"
         style="width:150px;height:150px;border-radius:50%;background:${waTalking?'#c81e1e':'var(--navy)'};color:#fff;font-weight:800;font-size:13px;border:none;margin:16px auto;display:flex;align-items:center;justify-content:center;text-align:center;padding:10px;user-select:none;-webkit-user-select:none;touch-action:none;white-space:pre-line;line-height:1.4;"
@@ -6113,7 +6069,7 @@ function rekapAnggotaDetail(title, list, extraLabel){
   openModal(title, `<div class="search-bar"><input id="rekap-detail-search" placeholder="Cari nama atau angkatan…" oninput="filterRekapDetail()"></div><div style="font-size:11px;color:var(--muted);margin-bottom:8px;">Jumlah peserta: <b id="rekap-detail-count">${data.length}</b></div><div class="card" id="rekap-detail-list" style="max-height:60vh;overflow:auto;padding:8px;">${body}</div>`, null, null);
 }
 function filterRekapDetail(){
-  const q=(document.getElementById('rekap-detail-search')?.value||'').trim().toLowerCase();
+  const q=normalizeSearchText(document.getElementById('rekap-detail-search')?.value||'');
   let n=0;
   document.querySelectorAll('#rekap-detail-list .rekap-member-row').forEach(el=>{
     const hay=((el.getAttribute('data-search')||'')+' '+(el.textContent||'')).toLowerCase();
@@ -6279,8 +6235,14 @@ function renderCariAlamat(){
 }
 function renderCariAlamatList(){
   const box=document.getElementById('cari-alamat-list'); if(!box) return;
-  const q=(document.getElementById('cari-alamat-q')?.value||'').trim().toLowerCase();
-  const list=(DB.anggota||[]).filter(a=>!q||String(a.alamat||'').toLowerCase().includes(q))
+  const q=normalizeSearchText(document.getElementById('cari-alamat-q')?.value||'');
+  const list=(DB.anggota||[]).filter(a=>{
+    if(!q) return true;
+    const hay=normalizeSearchText([
+      a.nama,a.alamat,a.angkatan,getJabatanUtama(a),getJabatanTambahan(a),a.krida,a.status
+    ].filter(v=>v!=null).join(' '));
+    return hay.includes(q);
+  })
     .sort((a,b)=>Number(a.angkatan||9999)-Number(b.angkatan||9999)||String(a.nama||'').localeCompare(String(b.nama||'')));
   const pageSize=10;
   const page=window._cariAlamatPage||1;
@@ -6331,8 +6293,10 @@ function renderAdminAnggota(){
   renderAdminAnggotaList();
 }
 function renderAdminAnggotaList(){
-  const q=(document.getElementById('admanggota-search')?.value||'').toLowerCase();
-  const list = DB.anggota.filter(a=>a.nama.toLowerCase().includes(q));
+  const q=normalizeSearchText(document.getElementById('admanggota-search')?.value||'');
+  const list = DB.anggota.filter(a=>searchTextIncludes(
+    [a.nama,a.angkatan,getJabatanUtama(a),getJabatanTambahan(a),a.krida,a.status].filter(v=>v!=null).join(' '), q
+  ));
   document.getElementById('admanggota-list').innerHTML = list.map(a=>`
     <div class="admin-row">
       ${avatarHtml(a, 38)}
