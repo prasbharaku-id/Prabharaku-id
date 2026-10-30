@@ -6251,6 +6251,117 @@ function filterRekapDetail(){
   });
   const c=document.getElementById('rekap-detail-count'); if(c)c.textContent=n;
 }
+
+/* Rekap absensi lintas seluruh sesi, dikelompokkan berdasarkan angkatan.
+   Menggunakan data absensi yang sudah tersimpan; tidak membuat data contoh. */
+function rekapAbsensiPerAngkatanHtml(anggotaList, bulanDipilih){
+  const members=Array.isArray(anggotaList)?anggotaList:[];
+  const allRecords=Array.isArray(DB.absensi)?DB.absensi:[];
+  const monthKey=t=>{
+    const raw=String(t||'').trim();
+    const m=raw.match(/^(\d{4})-(\d{1,2})/);
+    if(m) return m[1]+'-'+String(m[2]).padStart(2,'0');
+    const d=new Date(raw);
+    return isNaN(d)?'':d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+  };
+  const months=[...new Set(allRecords.map(r=>monthKey(r.tanggal)).filter(Boolean))].sort().reverse();
+  const now=new Date();
+  const currentMonth=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  const selected=bulanDipilih|| (months.includes(currentMonth)?currentMonth:(months[0]||currentMonth));
+  const records=allRecords.filter(r=>monthKey(r.tanggal)===selected);
+  const monthLabel=k=>{
+    const [y,m]=k.split('-').map(Number);
+    return new Date(y,m-1,1).toLocaleDateString('id-ID',{month:'long',year:'numeric'});
+  };
+  const normStatus=v=>{
+    const s=String(v||'').trim().toLowerCase();
+    if(s==='tidak hadir'||s==='alpa'||s==='alpha') return 'Alpa';
+    if(s==='hadir') return 'Hadir';
+    if(s==='izin') return 'Izin';
+    if(s==='sakit') return 'Sakit';
+    return 'Lainnya';
+  };
+  const grouped={};
+  members.forEach(a=>{
+    const key=(a.angkatan==null||String(a.angkatan).trim()==='')?'Belum Diisi':String(a.angkatan);
+    (grouped[key]=grouped[key]||[]).push(a);
+  });
+  const keys=Object.keys(grouped).sort((a,b)=>{
+    if(a==='Belum Diisi') return 1;
+    if(b==='Belum Diisi') return -1;
+    return (Number(a)-Number(b)) || a.localeCompare(b);
+  });
+  const total={Hadir:0,Izin:0,Sakit:0,Alpa:0};
+  records.forEach(r=>{const st=normStatus(r.status);if(total[st]!=null)total[st]++;});
+  const sesiBulan=new Set(records.map(r=>r.sesiId).filter(Boolean)).size;
+  const monthOptions=months.length?months:[selected];
+  const summary=`<div class="card" style="margin-bottom:10px;">
+    <div style="font-size:12px;font-weight:900;margin-bottom:9px;">RINGKASAN ABSENSI BULAN ${esc(monthLabel(selected).toUpperCase())}</div>
+    <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;">
+      ${[['Hadir',total.Hadir,'#e8f8ee','#146c2e'],['Izin',total.Izin,'#fff7e6','#8a5a00'],['Sakit',total.Sakit,'#eaf2ff','#2458a6'],['Alpa',total.Alpa,'#fdecec','#a11']].map(([label,n,bg,fg])=>`<div style="padding:10px;border-radius:10px;background:${bg};color:${fg};"><div style="font-size:10.5px;font-weight:700;">${label}</div><div style="font-size:21px;font-weight:900;">${n}</div></div>`).join('')}
+    </div>
+    <div style="font-size:10.5px;color:var(--muted);margin-top:9px;">${records.length} catatan absensi · ${sesiBulan} sesi pada bulan ini</div>
+  </div>`;
+  const sections=keys.map(key=>{
+    const list=grouped[key].slice().sort((a,b)=>String(a.nama||'').localeCompare(String(b.nama||'')));
+    const rows=list.map((a,i)=>{
+      const mine=records.filter(r=>String(r.anggotaId||'')===String(a.id||''));
+      const c={Hadir:0,Izin:0,Sakit:0,Alpa:0};
+      mine.forEach(r=>{const st=normStatus(r.status);if(c[st]!=null)c[st]++;});
+      const detail=mine.slice().sort((x,y)=>String(x.tanggal||'').localeCompare(String(y.tanggal||''))).map(r=>{
+        const sesi=typeof getSesiById==='function'?getSesiById(r.sesiId):null;
+        const st=normStatus(r.status);
+        const statusLabel=st==='Alpa'?'Alpa / Tanpa Keterangan':st;
+        return `<div style="padding:8px 0;border-bottom:1px solid var(--line);">
+          <div style="font-weight:800;">${esc(fmtDate(r.tanggal)||r.tanggal||'-')} · ${esc(statusLabel)}</div>
+          <div style="font-size:10.5px;color:var(--muted);margin-top:3px;">Kegiatan: ${esc(sesi?.keterangan||'-')} · Waktu: ${esc(r.waktu||'-')}</div>
+          ${r.keterangan?`<div style="font-size:10.5px;margin-top:3px;">Catatan: ${esc(r.keterangan)}</div>`:''}
+        </div>`;
+      }).join('');
+      return `<tr style="border-top:1px solid var(--line);">
+        <td style="padding:8px;white-space:nowrap;">${i+1}</td>
+        <td style="padding:8px;min-width:145px;font-weight:700;">${esc(a.nama||'-')}</td>
+        <td style="padding:8px;text-align:center;color:#146c2e;font-weight:800;">${c.Hadir}</td>
+        <td style="padding:8px;text-align:center;color:#8a5a00;font-weight:800;">${c.Izin}</td>
+        <td style="padding:8px;text-align:center;color:#2458a6;font-weight:800;">${c.Sakit}</td>
+        <td style="padding:8px;text-align:center;color:#a11;font-weight:800;">${c.Alpa}</td>
+        <td style="padding:8px;text-align:center;font-weight:900;">${mine.length}</td>
+        <td style="padding:8px;min-width:105px;">${mine.length?`<details><summary style="cursor:pointer;color:var(--blue);font-weight:800;">Lihat detail</summary><div style="min-width:220px;max-width:340px;padding-top:6px;">${detail}</div></details>`:'-'}</td>
+      </tr>`;
+    }).join('');
+    const subtotal=list.reduce((acc,a)=>{
+      records.filter(r=>String(r.anggotaId||'')===String(a.id||'')).forEach(r=>{const st=normStatus(r.status);if(acc[st]!=null)acc[st]++;});
+      return acc;
+    },{Hadir:0,Izin:0,Sakit:0,Alpa:0});
+    return `<details class="card" style="padding:0;overflow:hidden;margin-bottom:9px;" ${keys.length===1?'open':''}>
+      <summary style="list-style:none;cursor:pointer;padding:12px;display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--bg,#f4f6fa);">
+        <span style="font-size:12px;font-weight:900;">🏷️ ${key==='Belum Diisi'?key:'Angkatan '+esc(key)} <small style="display:block;font-size:10px;color:var(--muted);font-weight:600;margin-top:3px;">${list.length} anggota · Hadir ${subtotal.Hadir} · Alpa ${subtotal.Alpa}</small></span>
+        <span style="font-size:11px;font-weight:800;color:var(--blue);">Lihat ▾</span>
+      </summary>
+      <div class="table-wrap"><table style="width:100%;border-collapse:collapse;font-size:11px;">
+        <thead><tr style="background:#fafbfe;">
+          <th style="padding:8px;text-align:left;">No</th><th style="padding:8px;text-align:left;">Nama</th>
+          <th style="padding:8px;text-align:center;">Hadir</th><th style="padding:8px;text-align:center;">Izin</th>
+          <th style="padding:8px;text-align:center;">Sakit</th><th style="padding:8px;text-align:center;">Alpa</th>
+          <th style="padding:8px;text-align:center;">Total</th><th style="padding:8px;text-align:left;">Detail Absen</th>
+        </tr></thead><tbody>${rows||'<tr><td colspan="8" class="empty-state">Belum ada anggota.</td></tr>'}</tbody>
+      </table></div>
+    </details>`;
+  }).join('');
+  const selector=`<div class="card" style="margin-bottom:10px;">
+    <label for="filter-bulan-rekap-absen" style="display:block;font-size:11px;font-weight:800;margin-bottom:7px;">PILIH BULAN REKAP ABSENSI</label>
+    <select id="filter-bulan-rekap-absen" onchange="renderRekapAbsensiBulan(this.value)" style="width:100%;padding:11px;border:1px solid var(--line);border-radius:9px;background:var(--card,#fff);color:var(--text);font-weight:700;">
+      ${monthOptions.map(k=>`<option value="${k}" ${k===selected?'selected':''}>${esc(monthLabel(k))}</option>`).join('')}
+    </select>
+  </div>`;
+  return selector+summary+(sections||'<div class="empty-state">Belum ada data anggota untuk direkap.</div>')+(records.length?'':'<div class="empty-state">Belum ada catatan absensi pada bulan '+esc(monthLabel(selected))+'.</div>');
+}
+function renderRekapAbsensiBulan(bulan){
+  const target=document.getElementById('rekap-absensi-bulanan');
+  if(!target)return;
+  target.innerHTML=rekapAbsensiPerAngkatanHtml(DB.anggota||[],bulan);
+}
+
 function renderRekapAnggota(){
   if(!canViewRekapAnggota()){
     document.getElementById('content').innerHTML='<div class="empty-state">⚠️ Kamu tidak memiliki akses ke Rekapitulasi Anggota.</div>'; return;
@@ -6322,6 +6433,10 @@ function renderRekapAnggota(){
         <div class="stat-val">${jumlahGenderKosong}</div><div class="stat-sub">${persenKosong}% dari total · Data tanpa jenis kelamin</div>
       </div>
     </div>
+
+
+    <div class="section-title">📊 Rekap Absensi Seluruh Anggota</div>
+    <div id="rekap-absensi-bulanan">${rekapAbsensiPerAngkatanHtml(all)}</div>
 
     <div class="section-title">📋 Menu Rekapitulasi Anggota</div>
     <div class="card" style="padding:8px;">
