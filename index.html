@@ -7495,6 +7495,9 @@ function renderIuranChart(rows){
   const max=Math.max(...Object.values(groups),1);
   return Object.entries(groups).map(([k,v])=>`<div style="margin:9px 0;"><div style="display:flex;justify-content:space-between;font-size:11px;font-weight:800;"><span>${esc(k)}</span><span>Rp${v.toLocaleString('id-ID')}</span></div><div style="height:10px;background:#eee;border-radius:20px;overflow:hidden;margin-top:4px;"><div style="height:100%;width:${Math.max(4,Math.round(v/max*100))}%;background:linear-gradient(90deg,#d6a21e,#f0c85a);border-radius:20px;"></div></div></div>`).join('');
 }
+function daftarAngkatanIuran(){
+  return [...new Set((DB.anggota||[]).filter(a=>a.status==='Aktif' && a.angkatan!==null && a.angkatan!==undefined && String(a.angkatan).trim()!=='').map(a=>String(a.angkatan)))].sort((a,b)=>Number(a)-Number(b));
+}
 function renderIuranBendahara(){
   if(!isBendaharaJabatan()){document.getElementById('content').innerHTML='<div class="empty-state">Hanya Bendahara yang bisa mengelola iuran.</div>';return;}
   const jadwal=(DB.iuranJadwal||[]).sort((a,b)=>new Date(b.tanggal||0)-new Date(a.tanggal||0));
@@ -7504,30 +7507,38 @@ function renderIuranBendahara(){
   document.getElementById('iuran-jadwal-list').innerHTML=jadwal.map(j=>{
     const bayar=(DB.iuranBayar||[]).filter(x=>x.jadwalId===j.id); const aktif=j.aktif!==false;
     return `<div class="card" style="margin:0 0 10px;padding:12px;border:1px solid #eee;">
-      <div style="display:flex;gap:9px;align-items:flex-start;"><div style="font-size:25px;">🪙</div><div class="grow"><div class="name">${esc(j.namaKegiatan||'Iuran')}</div><div class="meta">Rp${(Number(j.jumlah)||0).toLocaleString('id-ID')} · ${iuranTanggalLabel(j.tanggal)} · ${esc(j.bulan||iuranBulanLabel(j.tanggal))}</div><div class="meta">${bayar.length} anggota sudah bayar</div></div><span class="chip ${aktif?'chip-active':'chip-pending'}">${aktif?'AKTIF':'NONAKTIF'}</span></div>
+      <div style="display:flex;gap:9px;align-items:flex-start;"><div style="font-size:25px;">🪙</div><div class="grow"><div class="name">${esc(j.namaKegiatan||'Iuran')}</div><div class="meta">Rp${(Number(j.jumlah)||0).toLocaleString('id-ID')} · ${iuranTanggalLabel(j.tanggal)} · ${esc(j.bulan||iuranBulanLabel(j.tanggal))}</div><div class="meta">Angkatan: ${Array.isArray(j.angkatanTerpilih)&&j.angkatanTerpilih.length?j.angkatanTerpilih.map(x=>' '+esc(String(x))).join(', '):'Semua angkatan (jadwal lama)'}</div><div class="meta">${bayar.length} anggota sudah bayar</div></div><span class="chip ${aktif?'chip-active':'chip-pending'}">${aktif?'AKTIF':'NONAKTIF'}</span></div>
       <div style="display:flex;gap:7px;margin-top:10px;"><button class="btn-outline" style="flex:1;" onclick="kelolaPembayaranIuran('${j.id}')">👥 CEK PEMBAYARAN</button><button class="btn-outline" style="width:auto;" onclick="toggleIuran('${j.id}')">${aktif?'⏸ Matikan':'▶ Aktifkan'}</button></div></div>`;
   }).join('')||'<div class="empty-state">Belum ada jadwal iuran.</div>';
 }
 function openBuatIuranModal(){
-  openModal('🪙 Buat Jadwal Iuran Mingguan',`<div class="field"><label>Nama Kegiatan</label><input id="iu-nama" placeholder="Contoh: Iuran Mingguan" autocomplete="off"></div><div class="field"><label>Jumlah Iuran (Rp)</label><input id="iu-jumlah" inputmode="numeric" placeholder="Rp10.000" oninput="formatRupiahInput(this)"></div><div class="field"><label>Tanggal</label><input id="iu-tanggal" type="date" value="${todayStr()}"></div><div class="field"><label>Bulan</label><input id="iu-bulan" value="${iuranBulanLabel(todayStr())}" disabled></div><div class="field"><label>Status</label><select id="iu-aktif"><option value="1">Aktifkan sekarang</option><option value="0">Simpan sebagai nonaktif</option></select></div>`,async()=>{
+  const angkatan=daftarAngkatanIuran();
+  const pilihan=angkatan.map(x=>`<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #e5e7eb;border-radius:9px;margin:5px 0;font-weight:600;"><input type="checkbox" class="iu-angkatan-check" value="${esc(x)}" checked style="width:18px;height:18px;"> Angkatan ${esc(x)}</label>`).join('');
+  openModal('🪙 Buat Jadwal Iuran Mingguan',`<div class="field"><label>Nama Kegiatan</label><input id="iu-nama" placeholder="Contoh: Iuran Mingguan" autocomplete="off"></div><div class="field"><label>Jumlah Iuran (Rp)</label><input id="iu-jumlah" inputmode="numeric" placeholder="Rp10.000" oninput="formatRupiahInput(this)"></div><div class="field"><label>Tanggal</label><input id="iu-tanggal" type="date" value="${todayStr()}"></div><div class="field"><label>Bulan</label><input id="iu-bulan" value="${iuranBulanLabel(todayStr())}" disabled></div><div class="field"><label>Pilih Angkatan yang Dikenakan Iuran</label><div style="display:flex;gap:8px;margin:5px 0 8px;"><button type="button" class="btn-outline" style="width:auto;padding:6px 10px;" onclick="document.querySelectorAll('.iu-angkatan-check').forEach(x=>x.checked=true)">Pilih Semua</button><button type="button" class="btn-outline" style="width:auto;padding:6px 10px;" onclick="document.querySelectorAll('.iu-angkatan-check').forEach(x=>x.checked=false)">Hapus Pilihan</button></div><div style="max-height:180px;overflow:auto;">${pilihan||'<div class="empty-state">Belum ada anggota aktif yang memiliki data angkatan.</div>'}</div></div><div class="field"><label>Status</label><select id="iu-aktif"><option value="1">Aktifkan sekarang</option><option value="0">Simpan sebagai nonaktif</option></select></div>`,async()=>{
     const nama=document.getElementById('iu-nama').value.trim(), jumlah=rupiahNumber(document.getElementById('iu-jumlah').value), tanggal=document.getElementById('iu-tanggal').value, aktif=document.getElementById('iu-aktif').value==='1';
+    const angkatanTerpilih=[...document.querySelectorAll('.iu-angkatan-check:checked')].map(x=>x.value);
     if(!nama||!jumlah||!tanggal){toast('Nama kegiatan, jumlah, dan tanggal wajib diisi.');return;}
-    DB.iuranJadwal=DB.iuranJadwal||[]; DB.iuranJadwal.unshift({id:uid(),namaKegiatan:nama,jumlah,tanggal,bulan:iuranBulanLabel(tanggal),aktif,dibuatOleh:session.nama,waktu:new Date().toISOString()});
+    if(!angkatanTerpilih.length){toast('Pilih minimal satu angkatan untuk jadwal iuran.');return;}
+    DB.iuranJadwal=DB.iuranJadwal||[]; DB.iuranJadwal.unshift({id:uid(),namaKegiatan:nama,jumlah,tanggal,bulan:iuranBulanLabel(tanggal),angkatanTerpilih,aktif,dibuatOleh:session.nama,waktu:new Date().toISOString()});
     await save('iuranJadwal'); closeModal(); toast('Jadwal iuran berhasil dibuat.'); renderIuranBendahara();
   },null,'💾 Simpan Jadwal');
 }
 async function toggleIuran(id){if(!isBendaharaJabatan())return;const j=(DB.iuranJadwal||[]).find(x=>x.id===id);if(!j)return;j.aktif=j.aktif===false;await save('iuranJadwal');renderIuranBendahara();}
 function kelolaPembayaranIuran(jadwalId){
   if(!isBendaharaJabatan())return; const j=(DB.iuranJadwal||[]).find(x=>x.id===jadwalId);if(!j)return;
-  const q=''; const anggota=(DB.anggota||[]).filter(a=>a.status==='Aktif').sort((a,b)=>a.nama.localeCompare(b.nama,'id'));
-  openModal('👥 Pembayaran — '+j.namaKegiatan,`<div class="search-bar"><input id="iuran-pay-search" placeholder="Cari nama anggota…" autocomplete="off" oninput="filterIuranPay('${jadwalId}')"></div><div id="iuran-pay-list"></div>`,null,null);
-  window._iuranPayJadwal=jadwalId; renderIuranPayList(jadwalId);
+  const cohorts=Array.isArray(j.angkatanTerpilih)&&j.angkatanTerpilih.length?j.angkatanTerpilih.map(String):daftarAngkatanIuran();
+  const tabs=cohorts.map((x,i)=>`<button type="button" class="btn-outline" style="width:auto;padding:7px 11px;" onclick="pilihAngkatanIuranPay('${jadwalId}','${esc(x)}')">Angkatan ${esc(x)}</button>`).join('');
+  openModal('👥 Pembayaran — '+j.namaKegiatan,`<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:10px;">${tabs}</div><div class="search-bar"><input id="iuran-pay-search" placeholder="Cari nama anggota…" autocomplete="off" oninput="filterIuranPay('${jadwalId}')"></div><div id="iuran-pay-heading" style="font-weight:800;margin:8px 0;"></div><div id="iuran-pay-list"></div>`,null,null);
+  window._iuranPayJadwal=jadwalId; window._iuranPayAngkatan=cohorts[0]||''; renderIuranPayList(jadwalId);
 }
+function pilihAngkatanIuranPay(jadwalId,angkatan){window._iuranPayAngkatan=String(angkatan);const q=document.getElementById('iuran-pay-search');if(q)q.value='';renderIuranPayList(jadwalId);}
 function filterIuranPay(jadwalId){renderIuranPayList(jadwalId);}
 function renderIuranPayList(jadwalId){
   const box=document.getElementById('iuran-pay-list');if(!box)return;const q=(document.getElementById('iuran-pay-search')?.value||'').trim().toLowerCase();
-  const arr=(DB.anggota||[]).filter(a=>a.status==='Aktif' && a.nama.toLowerCase().includes(q)).sort((a,b)=>a.nama.localeCompare(b.nama,'id'));
-  box.innerHTML=arr.map(a=>{const rec=iuranBayarUntuk(jadwalId,a.id);const paid=rec.length>0;return `<div class="admin-row"><div class="grow"><div class="name">${esc(a.nama)}</div><div class="meta">${paid?'Sudah bayar · '+iuranTanggalLabel(rec[0].tanggalBayar):'Belum bayar'}</div></div><button class="${paid?'btn-outline':'btn-primary'}" style="width:auto;padding:7px 10px;" onclick="terimaIuran('${jadwalId}','${a.id}')">${paid?'✓ Diterima':'✓ Terima'}</button></div>`}).join('')||'<div class="empty-state">Nama tidak ditemukan.</div>';
+  const angkatan=String(window._iuranPayAngkatan||'');
+  const heading=document.getElementById('iuran-pay-heading');if(heading)heading.textContent=angkatan?'Daftar Anggota Angkatan '+angkatan:'Daftar Anggota';
+  const arr=(DB.anggota||[]).filter(a=>a.status==='Aktif' && String(a.angkatan??'')===angkatan && String(a.nama||'').toLowerCase().includes(q)).sort((a,b)=>a.nama.localeCompare(b.nama,'id'));
+  box.innerHTML=arr.map(a=>{const rec=iuranBayarUntuk(jadwalId,a.id);const paid=rec.length>0;return `<div class="admin-row"><div class="grow"><div class="name">${esc(a.nama)}</div><div class="meta">Angkatan ${esc(angkatan)} · ${paid?'Sudah bayar · '+iuranTanggalLabel(rec[0].tanggalBayar):'Belum bayar'}</div></div><button class="${paid?'btn-outline':'btn-primary'}" style="width:auto;padding:7px 10px;" onclick="terimaIuran('${jadwalId}','${a.id}')">${paid?'✓ Diterima':'✓ Terima'}</button></div>`}).join('')||'<div class="empty-state">Belum ada anggota aktif pada angkatan ini atau nama tidak ditemukan.</div>';
 }
 async function terimaIuran(jadwalId,anggotaId){
   if(!isBendaharaJabatan())return; DB.iuranBayar=DB.iuranBayar||[]; const j=(DB.iuranJadwal||[]).find(x=>x.id===jadwalId), a=(DB.anggota||[]).find(x=>x.id===anggotaId);if(!j||!a)return;
