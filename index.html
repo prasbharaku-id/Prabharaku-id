@@ -1268,8 +1268,13 @@ function getJabatanUtama(a){
 }
 function getJabatanTambahan(a){
   if(!a) return '';
-  if(JABATAN_TAMBAHAN_LIST.includes(a.jabatanTambahan)) return a.jabatanTambahan;
-  if(JABATAN_TAMBAHAN_LIST.includes(a.jabatan_tambahan)) return a.jabatan_tambahan;
+  // Kolom baru adalah sumber utama. Nilai kosong/null berarti memang tidak
+  // memiliki jabatan tambahan dan tidak boleh ditimpa fallback data lama.
+  if(Object.prototype.hasOwnProperty.call(a,'jabatanTambahan'))
+    return JABATAN_TAMBAHAN_LIST.includes(a.jabatanTambahan) ? a.jabatanTambahan : '';
+  if(Object.prototype.hasOwnProperty.call(a,'jabatan_tambahan'))
+    return JABATAN_TAMBAHAN_LIST.includes(a.jabatan_tambahan) ? a.jabatan_tambahan : '';
+  // Kompatibilitas untuk data lama yang belum memiliki kolom jabatan tambahan.
   if(JABATAN_TAMBAHAN_LIST.includes(a.jabatan)) return a.jabatan;
   if(a.jabatan==='Ketua') return 'Ketua Dewan';
   if(a.jabatan==='Wakil Ketua') return 'Wakil Ketua Dewan';
@@ -6623,16 +6628,33 @@ async function openTunjukSebagai(id){
     <div style="font-size:10.5px;color:var(--muted);">Jabatan Utama, akun, ID, username, dan kata sandi tidak diubah.</div>
   `,async()=>{
     if(!isAdminSystem()){ toast('⚠️ Hanya Admin yang dapat mengatur jabatan tambahan.'); return; }
-    const val=document.getElementById('tj-jabatan').value||null;
+    const select=document.getElementById('tj-jabatan');
+    if(!select){ toast('Form jabatan tidak ditemukan. Silakan buka ulang menu.'); return; }
+    const val=select.value||'';
+    const mainRole=getJabatanUtama(a);
+    // Simpan nilai lama untuk pemulihan bila penyimpanan ke Supabase gagal.
+    const before={jabatan:a.jabatan,jabatanUtama:a.jabatanUtama,jabatanTambahan:a.jabatanTambahan,jabatan_tambahan:a.jabatan_tambahan};
+    const had={jabatan:Object.prototype.hasOwnProperty.call(a,'jabatan'),jabatanUtama:Object.prototype.hasOwnProperty.call(a,'jabatanUtama'),jabatanTambahan:Object.prototype.hasOwnProperty.call(a,'jabatanTambahan'),jabatan_tambahan:Object.prototype.hasOwnProperty.call(a,'jabatan_tambahan')};
     try{
-      const {error}=await window.FB.client.rpc('set_jabatan_tambahan',{p_anggota_id:id,p_jabatan_tambahan:val});
-      if(error) throw error;
-      a.jabatanTambahan=val||'';
+      // Gunakan jalur penyimpanan data anggota yang memang sudah dipakai aplikasi,
+      // bukan RPC khusus yang dapat gagal jika fungsi SQL belum tersedia.
+      a.jabatanUtama=mainRole;
+      a.jabatanTambahan=val;
       a.jabatan_tambahan=val||null;
-      const u=DB.users.find(x=>x.anggotaId===id);
-      if(u){u.jabatan_tambahan=val||null;u.jabatanTambahan=val||'';}
-      closeModal(); buildDrawer(); renderAdminAnggotaList(); toast(val?('Jabatan tambahan '+val+' ditetapkan.'): 'Jabatan tambahan dicabut.');
-    }catch(e){ toast('Gagal mengatur jabatan tambahan: '+(e?.message||'tidak diketahui')); }
+      // Pertahankan kompatibilitas pembacaan data lama tanpa mengubah jabatan utama.
+      a.jabatan=val||mainRole;
+      await save('anggota');
+      const u=(DB.users||[]).find(x=>x.anggotaId===id);
+      if(u){u.jabatanTambahan=val;u.jabatan_tambahan=val||null;}
+      closeModal(); buildDrawer(); renderAdminAnggotaList();
+      toast(val?('Jabatan tambahan '+val+' berhasil disimpan.'): 'Jabatan tambahan dicabut. Anggota kini tanpa jabatan tambahan.');
+    }catch(e){
+      for(const k of Object.keys(before)){
+        if(had[k]) a[k]=before[k]; else delete a[k];
+      }
+      console.error('Gagal menyimpan jabatan tambahan:',e);
+      toast('Gagal menyimpan jabatan tambahan. Periksa koneksi lalu coba lagi. Data sebelumnya dipulihkan.');
+    }
   });
 }
 function anggotaFormHtml(a, selfEdit, secretaryEdit){
