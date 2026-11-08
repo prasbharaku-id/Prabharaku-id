@@ -3786,7 +3786,7 @@ function startAbsensiSync(){
   if(absensiSyncTimer) clearInterval(absensiSyncTimer);
   // Sinkronisasi langsung saat halaman dibuka, lalu ulangi setiap 5 detik.
   if(currentView==='daftar-hadir'||currentView==='admin-absen') syncAbsensiShared();
-  absensiSyncTimer=setInterval(()=>{ if(currentView==='daftar-hadir'||currentView==='admin-absen') syncAbsensiShared(); },5000);
+  absensiSyncTimer=setInterval(()=>{ if(currentView==='daftar-hadir'||currentView==='admin-absen') syncAbsensiShared(); },2000);
 }
 function stopAbsensiSync(){ if(absensiSyncTimer){clearInterval(absensiSyncTimer);absensiSyncTimer=null;} }
 
@@ -4148,7 +4148,16 @@ function renderAbsenManual(){
     document.getElementById('content').innerHTML='<div class="empty-state">⚠️ Hanya Admin dan Sekretaris yang boleh mengisi Absen Manual</div>';
     return;
   }
-  const existing=ManualAbsenState.sesiId?getSesiById(ManualAbsenState.sesiId):null;
+  // Sekretaris/Admin yang baru login otomatis masuk ke sesi manual yang
+  // sedang berjalan; tidak perlu membuat sesi baru atau mengetahui ID sesi.
+  const sesiManualAktif=[...(DB.absensiSesi||[])]
+    .filter(s=>s && isManualSesi(s) && sudahMulai(s) && !s.locked && !s.ditutupManual && !s.waktuDisimpan && !s.waktuSelesai)
+    .sort((a,b)=>new Date(b.waktuDibuka||0)-new Date(a.waktuDibuka||0))[0] || null;
+  let existing=ManualAbsenState.sesiId?getSesiById(ManualAbsenState.sesiId):null;
+  if(sesiManualAktif && (!existing || !isManualSesi(existing) || existing.id!==sesiManualAktif.id)){
+    ManualAbsenState={sesiId:sesiManualAktif.id,draft:{}};
+    existing=sesiManualAktif;
+  }
   if(existing&&isManualSesi(existing)) renderManualSession(existing);
   else{
     ManualAbsenState={sesiId:null,draft:{}};
@@ -4200,7 +4209,11 @@ function manualDraftFor(sesi){
   const members=anggotaAktifUntukManual(sesi);
   const d=ManualAbsenState.draft||{};
   members.forEach(a=>{
-    if(d[a.id]==null){ const old=DB.absensi.find(r=>r.sesiId===sesi.id&&r.anggotaId===a.id); d[a.id]=old?(old.status||'Alpa'):''; }
+    // Nilai yang sudah tersimpan di Supabase selalu menjadi acuan utama,
+    // sehingga pilihan dari sekretaris/perangkat lain ikut terlihat.
+    const old=(DB.absensi||[]).find(r=>String(r.sesiId)===String(sesi.id)&&String(r.anggotaId)===String(a.id));
+    if(old) d[a.id]=old.status||'Alpa';
+    else if(d[a.id]==null) d[a.id]='';
   });
   ManualAbsenState.draft=d; return d;
 }
@@ -6337,7 +6350,7 @@ function rekapAbsensiPerAngkatanHtml(anggotaList, bulanDipilih){
   const chart=[['Hadir',total.Hadir,'#21864b'],['Izin',total.Izin,'#d99a19'],['Sakit',total.Sakit,'#3975c6'],['Alpa / Tanpa Keterangan',total.Alpa,'#c74444']];
   const chartDetails=chart.map(([label,n,color])=>{
     const status=label==='Alpa / Tanpa Keterangan'?'Alpa':label;
-    const list=memberStats.filter(a=>a._abs[status]>0).sort((a,b)=>b._abs[status]-a._abs[status]||String(a.nama||'').localeCompare(String(b.nama||'')));
+    const list=memberStats.filter(a=>status==='Alpa'?a._abs.Alpa>=3:a._abs[status]>0).sort((a,b)=>b._abs[status]-a._abs[status]||String(a.nama||'').localeCompare(String(b.nama||'')));
     const rows=list.map(a=>{
       let note='';
       if(status==='Alpa') note=a._abs.Alpa>=3?'⚠️ Masuk peringatan (minimal 3 kali)':'Belum mencapai batas peringatan';
@@ -6346,7 +6359,7 @@ function rekapAbsensiPerAngkatanHtml(anggotaList, bulanDipilih){
       else note=rajinHadir.some(x=>String(x.id)===String(a.id))?'🏆 Rajin hadir':(masihAman.some(x=>String(x.id)===String(a.id))?'✅ Absensi masih aman':'Catatan kehadiran');
       return `<div style="padding:9px 0;border-top:1px solid var(--line);display:flex;justify-content:space-between;gap:8px;align-items:center;"><div><b style="font-size:11.5px;">${esc(a.nama||'-')}</b><div style="font-size:10px;color:var(--muted);">Angkatan ${esc(a.angkatan||'-')} · ${esc(note)}</div></div><b style="font-size:11px;color:${color};white-space:nowrap;">${a._abs[status]} kali</b></div>`;
     }).join('');
-    return `<div id="rekap-chart-detail-${status}" style="display:none;"><button type="button" onclick="kembaliGrafikAbsensi()" style="border:0;background:var(--bg);color:var(--blue);padding:8px 12px;border-radius:8px;font-weight:800;margin-bottom:9px;cursor:pointer;">← Kembali ke Grafik</button><div class="card" style="border-left:4px solid ${color};"><div style="font-size:12px;font-weight:900;">${label}</div><div style="font-size:10.5px;color:var(--muted);margin:4px 0 8px;">${n} catatan pada ${esc(monthLabel(selected))} · ${list.length} anggota</div>${rows||'<div class="empty-state">Belum ada anggota pada kategori ini.</div>'}</div></div>`;
+    return `<div id="rekap-chart-detail-${status}" style="display:none;"><button type="button" onclick="kembaliGrafikAbsensi()" style="border:0;background:var(--bg);color:var(--blue);padding:8px 12px;border-radius:8px;font-weight:800;margin-bottom:9px;cursor:pointer;">← Kembali ke Grafik</button><div class="card" style="border-left:4px solid ${color};"><div style="font-size:12px;font-weight:900;">${label}</div><div style="font-size:10.5px;color:var(--muted);margin:4px 0 8px;">${status==='Alpa'?`${list.length} anggota dengan minimal 3 kali Alpa pada ${esc(monthLabel(selected))}`:`${n} catatan pada ${esc(monthLabel(selected))} · ${list.length} anggota`}</div>${rows||'<div class="empty-state">Belum ada anggota yang mencapai minimal 3 kali Alpa pada bulan ini.</div>'}</div></div>`;
   }).join('');
   const chartHtml=`<div id="rekap-chart-view" class="card" style="margin-bottom:10px;"><div style="font-size:12px;font-weight:900;margin-bottom:10px;">📈 GRAFIK STATUS ABSENSI</div>${chart.map(([label,n,color])=>`<button type="button" onclick="bukaDetailGrafikAbsensi('${label==='Alpa / Tanpa Keterangan'?'Alpa':label}')" style="display:block;width:100%;text-align:left;margin:9px 0;padding:8px;border:0;border-radius:9px;background:var(--bg);color:var(--text);cursor:pointer;"><div style="display:flex;justify-content:space-between;gap:8px;font-size:10.5px;margin-bottom:5px;"><b>${label}</b><b>${n} (${chartTotal?Math.round(n/chartTotal*100):0}%)</b></div><div style="height:11px;border-radius:99px;background:var(--line);overflow:hidden;"><div style="height:100%;width:${chartTotal?n/chartTotal*100:0}%;background:${color};border-radius:99px;"></div></div><div style="font-size:9px;color:var(--muted);margin-top:4px;">Ketuk untuk melihat daftar anggota</div></button>`).join('')}<div style="font-size:10px;color:var(--muted);margin-top:8px;">Grafik berdasarkan catatan absensi pada bulan yang dipilih.</div></div><div id="rekap-chart-details">${chartDetails}</div>`;
   const statusLists=statusCard('Alpa / Tanpa Keterangan','Peringatan diberikan jika Alpa atau tanpa keterangan sudah mencapai minimal 3 kali dalam bulan yang dipilih.',noKeterangan,'#c74444','⚠️',a=>a._abs.Alpa+' kali')+
