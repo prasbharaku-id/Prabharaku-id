@@ -3025,23 +3025,25 @@ function sudahMulai(sesi){
   return new Date().getTime() >= mulai.getTime();
 }
 // Sesi yang sedang berlangsung sekarang (sudah mulai, belum tutup).
-function getSesiAktif(){
-  const list = DB.absensiSesi || [];
-  return list.find(s=>{
-    if(!s || !sudahMulai(s)) return false;
-    // Semua mode memakai penanda penutupan yang sama. Ini mencegah sesi lama
-    // tetap dianggap berjalan hanya karena jam tutupnya tidak terbaca/format lama.
-    if(s.locked || s.ditutupManual || s.waktuDisimpan || s.waktuSelesai) return false;
-    // Sesi manual memang tidak bergantung pada jam selesai.
-    if(s.mode==='manual') return true;
-    // Sesi online tetap aktif sampai jam tutup atau tombol SELESAI & SIMPAN ditekan.
-    return !sudahLewatTutup(s);
-  }) || null;
+function sesiMasihTerbuka(s){
+  if(!s || !sudahMulai(s)) return false;
+  // Satu sumber kebenaran status sesi. Sesi yang sudah ditutup tidak boleh
+  // mengunci pembuatan sesi berikutnya, meskipun metadata/jam lama masih ada.
+  if(s.statusSesi==='selesai' || s.locked===true || s.ditutupManual===true ||
+     !!s.waktuDisimpan || !!s.waktuSelesai) return false;
+  if(s.mode==='manual') return true;
+  return !sudahLewatTutup(s);
 }
-
+function getSesiAktif(){
+  // Ambil sesi terbuka paling baru, bukan sesi lama pertama di dalam array.
+  return [...(DB.absensiSesi||[])]
+    .filter(sesiMasihTerbuka)
+    .sort((a,b)=>new Date(b.waktuDibuka||0)-new Date(a.waktuDibuka||0))[0] || null;
+}
 function getSesiAktifByMode(mode){
-  const list = DB.absensiSesi || [];
-  return list.find(s=>s && s.mode===mode && sudahMulai(s) && !sudahLewatTutup(s)) || null;
+  return [...(DB.absensiSesi||[])]
+    .filter(s=>s && s.mode===mode && sesiMasihTerbuka(s))
+    .sort((a,b)=>new Date(b.waktuDibuka||0)-new Date(a.waktuDibuka||0))[0] || null;
 }
 function getKelolaAbsensiActiveMode(){
   const aktif=getSesiAktif();
@@ -3085,8 +3087,10 @@ function ensureAlpaProcessed(){
     sesi.alpaDiproses = true;
     adaPerubahanSesi = true;
   });
-  if(adaPerubahanAbsensi) save('absensi');
-  if(adaPerubahanSesi) save('absensiSesi');
+  const jobs=[];
+  if(adaPerubahanAbsensi) jobs.push(save('absensi'));
+  if(adaPerubahanSesi) jobs.push(save('absensiSesi'));
+  return Promise.all(jobs);
 }
 function absenStatusBadge(status){
   const map = {
@@ -3526,7 +3530,7 @@ function stopAbsensiSync(){ if(absensiSyncTimer){clearInterval(absensiSyncTimer)
 function renderTutupAbsenAktifControl(){
   const sesiAktif = getSesiAktif();
   const sesiTerbuka = (DB.absensiSesi || []).find(s =>
-    s && sudahMulai(s) && !s.locked && !s.ditutupManual && !s.waktuDisimpan && !s.waktuSelesai
+    s && sudahMulai(s) && !s.locked && s.statusSesi!=='selesai' && !s.ditutupManual && !s.waktuDisimpan && !s.waktuSelesai
   ) || null;
   const sesi = sesiAktif || sesiTerbuka;
   const aktif = !!sesi;
@@ -3667,7 +3671,7 @@ function renderAdminAbsenOnline(){
   // Sesi yang masih terbuka tetap dapat ditutup secara manual, termasuk
   // sesi yang jamnya sudah lewat tetapi belum pernah disimpan/ditutup.
   const sesiTerbuka = (DB.absensiSesi || []).find(s =>
-    s && sudahMulai(s) && !s.locked && !s.ditutupManual && !s.waktuDisimpan && !s.waktuSelesai
+    s && sudahMulai(s) && !s.locked && s.statusSesi!=='selesai' && !s.ditutupManual && !s.waktuDisimpan && !s.waktuSelesai
   ) || null;
   const sesiUntukTutup = sesiAktif || sesiTerbuka;
   const pending = DB.absensi.filter(r=>r.approval==='Menunggu Persetujuan').sort((x,y)=>{ const ax=x.angkatan==null?-1:Number(x.angkatan), ay=y.angkatan==null?-1:Number(y.angkatan); return ay-ax || String(x.nama||'').localeCompare(String(y.nama||''),'id'); });
@@ -3727,7 +3731,9 @@ async function mulaiAbsenBaru(){
   if(!keterangan){ toast('Isi keterangan/nama kegiatan terlebih dahulu.'); return; }
   const sesiBaru = {
     id:uid(), tanggal, jamMulai, jamSelesai, keterangan, angkatanTarget,
-    dibukaOleh:session.nama, waktuDibuka:new Date().toISOString(), alpaDiproses:false, ditutupManual:false
+    dibukaOleh:session.nama, waktuDibuka:new Date().toISOString(), alpaDiproses:false,
+    ditutupManual:false, locked:false, statusSesi:'aktif', waktuDisimpan:null,
+    waktuSelesai:null, disimpanOleh:null
   };
   DB.absensiSesi.push(sesiBaru);
   await save('absensiSesi');
@@ -3750,9 +3756,17 @@ async function selesaiSimpanSesiAktif(id){
   sesi.disimpanOleh=session.nama;
   sesi.ditutupManual=true;
   sesi.locked=true;
+  sesi.statusSesi='selesai';
   sesi.alpaDiproses=false;
+  // Simpan penutupan dahulu, lalu tunggu pencatatan Alpa dan penyimpanannya
+  // benar-benar selesai sebelum sinkronisasi ulang dari server.
   await save('absensiSesi');
-  ensureAlpaProcessed();
+  await ensureAlpaProcessed();
+  sesi.statusSesi='selesai';
+  sesi.ditutupManual=true;
+  sesi.locked=true;
+  sesi.waktuDisimpan=sesi.waktuDisimpan||nowIso;
+  sesi.waktuSelesai=sesi.waktuSelesai||nowIso;
   await save('absensiSesi');
   // Segarkan data bersama supaya perangkat/akun Sekretaris lain segera melihat
   // bahwa sesi yang sama sudah selesai dan tombol Buat Absen Baru tersedia.
@@ -3884,7 +3898,7 @@ function renderAbsenManual(){
   // Sekretaris/Admin yang baru login otomatis masuk ke sesi manual yang
   // sedang berjalan; tidak perlu membuat sesi baru atau mengetahui ID sesi.
   const sesiManualAktif=[...(DB.absensiSesi||[])]
-    .filter(s=>s && isManualSesi(s) && sudahMulai(s) && !s.locked && !s.ditutupManual && !s.waktuDisimpan && !s.waktuSelesai)
+    .filter(s=>s && isManualSesi(s) && sudahMulai(s) && !s.locked && s.statusSesi!=='selesai' && !s.ditutupManual && !s.waktuDisimpan && !s.waktuSelesai)
     .sort((a,b)=>new Date(b.waktuDibuka||0)-new Date(a.waktuDibuka||0))[0] || null;
   let existing=ManualAbsenState.sesiId?getSesiById(ManualAbsenState.sesiId):null;
   if(sesiManualAktif && (!existing || !isManualSesi(existing) || existing.id!==sesiManualAktif.id)){
@@ -3928,7 +3942,7 @@ async function mulaiAbsenManual(){
   const sesi={
     id:uid(),mode:'manual',tanggal,jamMulai:waktu,jamSelesai:null,keterangan:kegiatan,angkatanTarget,
     dibukaOleh:session.nama,waktuDibuka,alpaDiproses:false,ditutupManual:false,locked:false,
-    waktuDisimpan:null,disimpanOleh:null,riwayatPerubahan:[]
+    statusSesi:'aktif',waktuDisimpan:null,waktuSelesai:null,disimpanOleh:null,riwayatPerubahan:[]
   };
   DB.absensiSesi=DB.absensiSesi||[];
   DB.absensiSesi.push(sesi);
