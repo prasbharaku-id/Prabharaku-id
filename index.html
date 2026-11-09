@@ -3617,8 +3617,15 @@ function switchKelolaAbsensiMode(mode){
   const online=document.getElementById('mode-online'), manual=document.getElementById('mode-manual');
   if(online) online.classList.toggle('active',mode==='online');
   if(manual) manual.classList.toggle('active',mode==='manual');
-  if(mode==='online') renderAdminAbsenOnline();
-  else renderAbsenManual();
+  // Kosongkan isi tab lama dulu agar form Absen Online tidak tertinggal saat tab Manual dibuka.
+  const box=document.getElementById('kelola-absen-mode-content'); if(box) box.innerHTML='';
+  try{
+    if(mode==='online') renderAdminAbsenOnline();
+    else renderAbsenManual();
+  }catch(err){
+    console.error('Gagal menampilkan tab absensi:',err);
+    if(box) box.innerHTML='<div class="card"><div class="empty-state">⚠️ Tampilan gagal dimuat: '+esc(err&&err.message||'kesalahan tidak diketahui')+'</div></div>';
+  }
 }
 function genderAbsensiNorm(a){
   const g=String(a?.gender||a?.jenisKelamin||a?.jenis_kelamin||'').trim().toLowerCase();
@@ -3915,6 +3922,7 @@ async function simpanUbahStatusAbsen(id){
 }
 /* ================= ABSEN MANUAL — ADMIN & SEKRETARIS ================= */
 let ManualAbsenState = {sesiId:null, draft:{}};
+var manualKegiatanDraft = '';   // sebelumnya tidak dideklarasikan -> tab Absen Manual error & tidak tampil
 function isManualSesi(s){ return !!s && s.mode==='manual'; }
 function daftarAngkatanManual(){
   const vals=[...(DB.anggota||[])]
