@@ -1581,7 +1581,10 @@ async function saveAllSeeded(){
   // sesuai kebijakan keamanan tabel users (lihat supabase_setup.sql).
   for(const k of ['anggota','berita','galeri','jadwal','chat','settings','absensi','absensiSesi','absensiSampah','surat','pengajuan','galeriAnggota','voicemail','walkieChannels','walkiePermintaan','medsos','setoran','pengeluaran','iuranJadwal','iuranBayar','pembinaData']) await save(k);
 }
+var _absenSavePending = 0, _absenSaveVersion = 0;
 async function save(key){
+  const _absenKey = (key==='absensi'||key==='absensiSesi'||key==='absensiSampah');
+  if(_absenKey){ _absenSavePending++; _absenSaveVersion++; }
   try{
     if(key === 'users'){ await window.FB.usersUpsertAll(DB.users); }
     else{ await window.FB.appDataSet(key, DB[key]); }
@@ -1589,6 +1592,8 @@ async function save(key){
     console.error('Gagal menyimpan "'+key+'":', e);
     toast('Gagal menyimpan data ('+(e && e.message ? e.message : 'tidak diketahui')+')');
     throw e;
+  }finally{
+    if(_absenKey){ _absenSavePending--; _absenSaveVersion++; }
   }
 }
 // Simpan SATU baris profil pengguna saja (bukan seluruh DB.users), karena
@@ -3183,7 +3188,7 @@ function renderAbsenSaya(){
     kartuHariIni = `
       <div class="qr-card">
         <div style="font-weight:800;font-size:14px;">⏰ ABSEN SEDANG BERLANGSUNG</div>
-        <div style="font-size:11px;color:var(--muted);margin-top:2px;">📅 ${fmtDate(sesiAktif.tanggal)} | 🕒 ${esc(sesiAktif.jamMulai)} — ${esc(sesiAktif.jamSelesai)}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;">📅 ${fmtDate(sesiAktif.tanggal)} | 🕒 ${esc(sesiAktif.jamMulai)} — ${sesiAktif.jamSelesai?esc(sesiAktif.jamSelesai):'sampai ditutup'}</div>
         <div style="font-size:11.5px;margin-top:4px;">📝 Kegiatan: ${esc(sesiAktif.keterangan||'-')}</div>
         <div style="font-size:11px;color:var(--muted);margin-top:3px;">👥 Target: ${labelAngkatanTarget(sesiAktif)}</div>
         <div style="margin-top:10px;">${absenStatusBadge(sudahDiisi.status)}</div>
@@ -3194,7 +3199,7 @@ function renderAbsenSaya(){
     kartuHariIni = `
       <div class="qr-card">
         <div style="font-weight:800;font-size:14px;">⏰ ABSEN SEDANG BERLANGSUNG</div>
-        <div style="font-size:11px;color:var(--muted);margin-top:2px;">📅 ${fmtDate(sesiAktif.tanggal)} | 🕒 ${esc(sesiAktif.jamMulai)} — ${esc(sesiAktif.jamSelesai)}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;">📅 ${fmtDate(sesiAktif.tanggal)} | 🕒 ${esc(sesiAktif.jamMulai)} — ${sesiAktif.jamSelesai?esc(sesiAktif.jamSelesai):'sampai ditutup'}</div>
         <div style="font-size:11.5px;margin-top:4px;">📝 Kegiatan: ${esc(sesiAktif.keterangan||'-')}</div>
         <div style="font-size:11px;color:var(--muted);margin-top:3px;">👥 Target: ${labelAngkatanTarget(sesiAktif)}</div>
         <div style="font-size:11px;color:var(--muted);margin-top:10px;">Pilih Kehadiran:</div>
@@ -3269,7 +3274,7 @@ async function simpanAbsenSaya(a, sesi, status, keterangan){
 }
 
 /* ---------------- Daftar Hadir (menyatu dengan Kelola Absensi — sesi sedang berlangsung + riwayat sesi) ---------------- */
-let DaftarHadirState = { sesiTerpilih: null, search: '' };
+let DaftarHadirState = { sesiTerpilih: null, search: '', listTerbuka: false };
 function setupAbsensiInputStabilizer(){
   if(window.__absensiInputStabilizerReady) return;
   window.__absensiInputStabilizerReady=true;
@@ -3379,7 +3384,7 @@ function renderDaftarHadir(){
     `<div class="section-title">Daftar Hadir</div>
      <div class="card" style="padding:10px 12px;">
        <button class="btn-outline" style="width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;text-align:left;padding:11px 12px;border-radius:10px;font-weight:800;" onclick="toggleDaftarTanggalKegiatan()">
-         <span>📅 PILIH TANGGAL & KEGIATAN</span><span id="dh-toggle-icon">▾</span>
+         <span>📅 PILIH TANGGAL & KEGIATAN</span><span id="dh-toggle-icon">${DaftarHadirState.listTerbuka?'▴':'▾'}</span>
        </button>
        <div style="margin-top:8px;padding:10px 11px;border:1px solid var(--line);border-radius:10px;background:var(--bg,#f4f6fa);">
          <div style="font-size:10px;color:var(--muted);">ABSEN YANG DIPILIH</div>
@@ -3387,9 +3392,9 @@ function renderDaftarHadir(){
          <div style="font-size:11px;color:var(--muted);margin-top:3px;">${selected?`📅 ${fmtDate(selected.tanggal)} · ${esc(selected.mode==='manual'?'📝 Absen Manual':'📷 Absen Online')}`:'Pilih salah satu tanggal/kegiatan di bawah.'}</div>
          ${selected&&isManualSesi(selected)?`<div style="font-size:11px;color:var(--muted);margin-top:5px;">🕒 Mulai: <b>${esc(selected.jamMulai||'-')}</b> · Selesai: <b>${esc(selected.jamSelesai||'-')}</b></div>${windowInfo}`:''}
        </div>
-       <div id="dh-all" style="display:none;margin-top:10px;">
+       <div id="dh-all" style="display:${DaftarHadirState.listTerbuka?'block':'none'};margin-top:10px;">
          <div style="font-size:11px;font-weight:800;color:var(--muted);margin:0 2px 6px;">DAFTAR TANGGAL & KEGIATAN</div>
-         <div style="padding:6px 0;">${rows}</div>
+         <div style="padding:6px 0;max-height:60vh;overflow-y:auto;-webkit-overflow-scrolling:touch;">${rows}</div>
        </div>
      </div>
      ${selected?`<div class="section-title">${esc(selected.keterangan||'-')} — ${fmtDate(selected.tanggal)}</div>
@@ -3400,6 +3405,7 @@ function toggleDaftarTanggalKegiatan(){
   const box=document.getElementById('dh-all'), icon=document.getElementById('dh-toggle-icon');
   if(!box) return;
   const open=box.style.display!=='none';
+  DaftarHadirState.listTerbuka=!open;
   box.style.display=open?'none':'block';
   if(icon) icon.textContent=open?'▾':'▴';
 }
@@ -3515,22 +3521,36 @@ function daftarTanggalKegiatanHtml(list){
 function pilihHasilAbsenSesi(sesiId){ window._absenHasilSesiFilter=sesiId||'SEMUA'; window._absenHasilSesiPickerOpen=false; renderAdminAbsenOnline(); }
 /* ---------------- ADMIN & SEKRETARIS: Kelola Absensi (buka sesi berkali-kali, setujui, ubah) ---------------- */
 let absensiSyncTimer=null;
+var _absenSentuhTerakhir = 0;
+document.addEventListener('touchstart',()=>{ _absenSentuhTerakhir=Date.now(); },{passive:true,capture:true});
+document.addEventListener('touchmove',()=>{ _absenSentuhTerakhir=Date.now(); },{passive:true,capture:true});
+document.addEventListener('scroll',()=>{ _absenSentuhTerakhir=Date.now(); },{passive:true,capture:true});
+var _absenRenderTertunda = false;
 async function syncAbsensiShared(){
   if(!session || !canManageAbsensi()) return;
+  if(_absenSavePending>0 || window._absenHapusProses) return;
   try{
+    const verAwal=_absenSaveVersion;
     const [abs,ses,samp]=await Promise.all([window.FB.appDataGet('absensi'),window.FB.appDataGet('absensiSesi'),window.FB.appDataGet('absensiSampah')]);
+    // Ada penyimpanan/penghapusan selama pengambilan data? Data ini sudah basi, jangan menimpa.
+    if(_absenSavePending>0 || window._absenHapusProses || verAwal!==_absenSaveVersion) return;
+    const sebelum=JSON.stringify([DB.absensi,DB.absensiSesi,DB.absensiSampah]);
     if(Array.isArray(abs)) DB.absensi=abs;
     if(Array.isArray(ses)) DB.absensiSesi=ses;
     if(Array.isArray(samp)) DB.absensiSampah=samp;
-    // Jangan melakukan re-render saat pengguna sedang mengetik.
-    // Re-render setiap 5 detik sebelumnya membuat input nama kegiatan/pencarian
-    // kehilangan fokus dan teks terlihat terhapus/berhenti.
+    const berubah = sebelum!==JSON.stringify([DB.absensi,DB.absensiSesi,DB.absensiSampah]);
+    if(berubah) _absenRenderTertunda=true;
+    // Tampilan HANYA digambar ulang bila data benar-benar berubah. Sebelumnya digambar ulang
+    // tiap 2 detik sehingga tabel yang digeser ke samping/atas-bawah kembali sendiri.
+    if(!_absenRenderTertunda) return;
+    // Tunda bila pengguna sedang mengetik atau baru saja menyentuh/menggeser layar.
     const active=document.activeElement;
     const sedangMengetik=!!(active && (active.tagName==='INPUT' || active.tagName==='TEXTAREA' || active.tagName==='SELECT') && (currentView==='daftar-hadir' || currentView==='admin-absen'));
-    if(!sedangMengetik){
-      if(currentView==='daftar-hadir') renderDaftarHadir();
-      else if(currentView==='admin-absen') switchKelolaAbsensiMode(window._kelolaAbsenMode||'online');
-    }
+    const sedangMenggeser=(Date.now()-_absenSentuhTerakhir)<4000;
+    if(sedangMengetik || sedangMenggeser) return;
+    _absenRenderTertunda=false;
+    if(currentView==='daftar-hadir') renderDaftarHadir();
+    else if(currentView==='admin-absen') switchKelolaAbsensiMode(window._kelolaAbsenMode||'online');
   }catch(e){ console.warn('Sinkronisasi absensi gagal:',e); }
 }
 function startAbsensiSync(){
@@ -3556,7 +3576,7 @@ function renderTutupAbsenAktifControl(){
           🔴 Ada absen yang masih aktif/terbuka
         </div>
         <div style="font-size:11px;color:var(--muted);margin-top:3px;">
-          📅 ${fmtDate(sesi.tanggal)} · 🕒 ${esc(sesi.jamMulai||'-')} – ${esc(sesi.jamSelesai||'-')} · 📝 ${esc(sesi.keterangan||'-')}
+          📅 ${fmtDate(sesi.tanggal)} · 🕒 ${esc(sesi.jamMulai||'-')} – ${esc(sesi.jamSelesai||'belum ditutup')} · 📝 ${esc(sesi.keterangan||'-')}
         </div>
       ` : `
         <div style="font-size:11.5px;color:var(--muted);margin-top:6px;">
@@ -3683,8 +3703,6 @@ function formBuatAbsenOnlineHtml(){
   const now = new Date();
   const pad = n=>String(n).padStart(2,'0');
   const jamMulai = pad(now.getHours())+':'+pad(now.getMinutes());
-  const akhir = new Date(now.getTime()+60*60*1000);
-  const jamSelesai = (akhir.getDate()===now.getDate()) ? pad(akhir.getHours())+':'+pad(akhir.getMinutes()) : '23:59';
   const angkatan = daftarAngkatanManual();
   const angkatanHtml = angkatan.length ? angkatan.map(x=>`<label style="display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:9px;padding:7px 9px;background:var(--card,#fff);font-size:11.5px;font-weight:800;cursor:pointer;">
         <input type="checkbox" class="absen-angkatan-cb" value="${esc(x)}"> Angkatan ${esc(x)}
@@ -3695,8 +3713,7 @@ function formBuatAbsenOnlineHtml(){
       <div class="field"><label>Keterangan / Nama Kegiatan</label>
         <input id="absen-keterangan" value="${esc(absensiKeteranganDraft||'')}" autocomplete="off" spellcheck="false" placeholder="Contoh: Latihan Rutin" oninput="absensiKeteranganDraft=this.value"></div>
       <div class="manual-live-clock">🕒 Waktu sekarang<br><b id="manual-live-clock">--:--:--</b><div id="manual-live-date" style="font-size:10px;font-weight:600;color:var(--muted);margin-top:2px;">Memuat tanggal...</div></div>
-      <div style="font-size:10.5px;color:var(--muted);margin:8px 0;">Tanggal dan jam mulai otomatis diambil dari waktu perangkat saat tombol BUKA ABSEN ditekan.</div>
-      <div class="field"><label>Jam Tutup</label><input type="time" id="absen-jam-selesai" value="${jamSelesai}"></div>
+      <div style="font-size:10.5px;color:var(--muted);margin:8px 0;">Tanggal dan jam mulai otomatis diambil dari waktu perangkat saat tombol BUKA ABSEN ditekan. Absen ditutup sendiri lewat tombol TUTUP ABSEN AKTIF &amp; SIMPAN.</div>
       <div class="field">
         <label>Angkatan yang Boleh Absen</label>
         <div style="font-size:11px;color:var(--muted);margin:4px 0 8px;">Hanya anggota dari angkatan yang dicentang yang bisa mengisi absen ini.</div>
@@ -3770,13 +3787,12 @@ async function mulaiAbsenBaru(){
   const _now = new Date();
   const tanggal = todayStr();
   const jamMulai = localTimeStr(_now);
-  const jamSelesai = document.getElementById('absen-jam-selesai').value;
+  const jamSelesai = null; // ditutup manual lewat tombol TUTUP ABSEN AKTIF & SIMPAN
   const keterangan = document.getElementById('absen-keterangan').value.trim();
   const angkatanTarget = [...document.querySelectorAll('.absen-angkatan-cb:checked')].map(x=>String(x.value));
   if(!angkatanTarget.length){ toast('Pilih minimal satu angkatan yang boleh absen.'); return; }
-  if(!tanggal || !jamMulai || !jamSelesai){ toast('Isi tanggal, jam mulai, dan jam tutup terlebih dahulu.'); return; }
+  if(!tanggal || !jamMulai){ toast('Tanggal dan jam mulai tidak terbaca dari perangkat.'); return; }
   if(!keterangan){ toast('Isi keterangan/nama kegiatan terlebih dahulu.'); return; }
-  if(jamSelesai<=jamMulai){ toast('Jam tutup harus lebih besar dari jam mulai.'); return; }
   const sesiBaru = {
     id:uid(), tanggal, jamMulai, jamSelesai, keterangan, angkatanTarget,
     dibukaOleh:session.nama, waktuDibuka:new Date().toISOString(), alpaDiproses:false,
@@ -4268,16 +4284,36 @@ async function simpanBukaKunciManual(sesiId){
 }
 async function hapusSesiAbsensi(id){
   if(!canManageAbsensi()) return;
+  if(window._absenHapusProses) return;           // cegah klik berulang saat proses berjalan
   const s=getSesiById(id); if(!s) return;
   if(!confirm('⚠️ Yakin ingin menghapus absensi ini? Data akan masuk ke Sampah dan masih dapat dipulihkan.')) return;
-  const records=(DB.absensi||[]).filter(r=>r.sesiId===id);
-  DB.absensiSampah=DB.absensiSampah||[];
-  DB.absensiSampah.unshift({id:uid(),deletedAt:new Date().toISOString(),deletedBy:session.nama||session.username,sesi:JSON.parse(JSON.stringify(s)),records:JSON.parse(JSON.stringify(records))});
-  DB.absensi=(DB.absensi||[]).filter(r=>r.sesiId!==id);
-  DB.absensiSesi=(DB.absensiSesi||[]).filter(x=>x.id!==id);
-  await save('absensiSampah'); await save('absensi'); await save('absensiSesi');
-  if(DaftarHadirState.sesiTerpilih===id) DaftarHadirState.sesiTerpilih=null;
-  toast('Absensi dipindahkan ke Sampah.'); renderDaftarHadir();
+  window._absenHapusProses=true;
+  const cadAbsensi=JSON.parse(JSON.stringify(DB.absensi||[]));
+  const cadSesi=JSON.parse(JSON.stringify(DB.absensiSesi||[]));
+  const cadSampah=JSON.parse(JSON.stringify(DB.absensiSampah||[]));
+  const cadTerpilih=DaftarHadirState.sesiTerpilih;
+  try{
+    const records=(DB.absensi||[]).filter(r=>r.sesiId===id);
+    DB.absensiSampah=DB.absensiSampah||[];
+    DB.absensiSampah.unshift({id:uid(),deletedAt:new Date().toISOString(),deletedBy:session.nama||session.username,sesi:JSON.parse(JSON.stringify(s)),records:JSON.parse(JSON.stringify(records))});
+    DB.absensi=(DB.absensi||[]).filter(r=>r.sesiId!==id);
+    DB.absensiSesi=(DB.absensiSesi||[]).filter(x=>x.id!==id);
+    if(DaftarHadirState.sesiTerpilih===id) DaftarHadirState.sesiTerpilih=null;
+    // Tampilan langsung diperbarui (tidak menunggu server) supaya terasa responsif.
+    if(currentView==='daftar-hadir') renderDaftarHadir();
+    else if(currentView==='admin-absen') renderAdminAbsen();
+    toast('Menghapus absensi…');
+    await Promise.all([save('absensiSampah'),save('absensi'),save('absensiSesi')]);
+    toast('✅ Absensi dipindahkan ke Sampah.');
+  }catch(e){
+    console.error('Hapus absensi gagal:',e);
+    DB.absensi=cadAbsensi; DB.absensiSesi=cadSesi; DB.absensiSampah=cadSampah; DaftarHadirState.sesiTerpilih=cadTerpilih;
+    toast('⚠️ Gagal menghapus absensi. Data dikembalikan, coba lagi.');
+    if(currentView==='daftar-hadir') renderDaftarHadir();
+    else if(currentView==='admin-absen') renderAdminAbsen();
+  }finally{
+    window._absenHapusProses=false;
+  }
 }
 async function restoreAbsensiSampah(id){
   if(!canManageAbsensi()) return;
@@ -8013,6 +8049,31 @@ navigate = function(view, opts){ cleanupChatBar(); _origNavigate(view, opts); };
   document.getElementById('loading').style.display='none';
   showScreen('login');
   document.getElementById('screen-login').style.display='block';
+})();
+
+/* ===== Pertahankan posisi geser saat tampilan digambar ulang (tabel absensi tidak balik sendiri) ===== */
+(function(){
+  function init(){
+    const c=document.getElementById('content'); if(!c||c.__keepScroll) return; c.__keepScroll=true;
+    const st={view:null,left:{},tops:new Map(),winY:0};
+    const anc=[]; for(let e=c;e;e=e.parentElement) anc.push(e);
+    document.addEventListener('scroll',ev=>{
+      const t=ev.target; if(st.view!==currentView){ st.view=currentView; st.left={}; st.tops=new Map(); }
+      if(t===document||t===document.documentElement||t===document.body){ st.winY=window.scrollY; return; }
+      if(t&&t.classList&&t.classList.contains('table-wrap')&&c.contains(t)){
+        const all=[...c.querySelectorAll('.table-wrap')]; st.left[all.indexOf(t)]=t.scrollLeft; return;
+      }
+      if(anc.includes(t)) st.tops.set(t,t.scrollTop);
+    },true);
+    new MutationObserver(()=>{
+      if(st.view!==currentView){ st.view=currentView; st.left={}; st.tops=new Map(); st.winY=0; return; }
+      c.querySelectorAll('.table-wrap').forEach((el,i)=>{ if(st.left[i]) el.scrollLeft=st.left[i]; });
+      st.tops.forEach((v,el)=>{ if(v && Math.abs(el.scrollTop-v)>1) el.scrollTop=v; });
+      if(st.winY && Math.abs(window.scrollY-st.winY)>1) window.scrollTo(0,st.winY);
+    }).observe(c,{childList:true,subtree:true});
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init); else init();
+  setTimeout(init,1500);
 })();
 </script>
 </body>
