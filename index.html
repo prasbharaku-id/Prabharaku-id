@@ -723,6 +723,20 @@
   }
   @media print{html,body{overflow:visible;max-width:none;}#phone{overflow:visible;max-width:none;}}
 
+  /* ===== TABEL ABSENSI: teks tidak terpotong/turun per huruf di HP; geser samping bila sempit ===== */
+  .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  table.tbl-absen{width:100%;min-width:max-content;}
+  table.tbl-absen th,table.tbl-absen td{white-space:nowrap;overflow-wrap:normal!important;word-break:normal!important;vertical-align:middle;}
+  table.tbl-absen td.td-wrap{white-space:normal;min-width:150px;max-width:260px;overflow-wrap:break-word!important;}
+  table.tbl-absen .role-pill,table.tbl-absen button{white-space:nowrap;overflow-wrap:normal;}
+  table.tbl-absen .manual-status-grid{min-width:220px;}
+  table.tbl-absen .manual-status-btn{white-space:nowrap;}
+  .absen-row .name,.admin-row .name{overflow-wrap:break-word;word-break:normal;}
+  .absen-row .meta,.admin-row .meta{overflow-wrap:break-word;word-break:normal;line-height:1.45;}
+  .admin-row .btn-outline,.admin-row .btn-primary{white-space:nowrap;flex:none;}
+  .role-pill{white-space:nowrap;}
+
+
 
   /* ===== PERBAIKAN RESPONSIF LANJUTAN: ukuran konten dihitung dari viewport ===== */
   *,*::before,*::after{box-sizing:border-box;}
@@ -2999,7 +3013,7 @@ function openMedsosForm(id){
    Setiap catatan absensi = { id, sesiId, anggotaId, nama, angkatan, jabatan, tanggal, waktu, status, keterangan(alasan izin/sakit),
                               approval, oleh, disetujuiOleh, waktuPersetujuan, diubahOleh, waktuUbah }
 ------------------------------------------------------------------------------------------------------- */
-function todayStr(){ return new Date().toISOString().slice(0,10); }
+function todayStr(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 
 // Menggabungkan tanggal (YYYY-MM-DD) + jam (HH:MM) sesi menjadi objek Date.
 function sesiWaktuKe(sesi, field){
@@ -3324,7 +3338,7 @@ function renderDaftarHadir(){
     return `<div style="margin-bottom:14px;">
       <div style="font-size:12.5px;font-weight:800;color:var(--navy);padding:8px 4px;">${title}</div>
       <div class="card table-wrap" style="padding:0;margin-bottom:0;">
-        <table style="width:100%;border-collapse:collapse;font-size:11.5px;">
+        <table class="tbl-absen" style="width:100%;border-collapse:collapse;font-size:11.5px;">
           <thead><tr style="background:var(--bg,#f4f6fa);">
             <th style="padding:9px 8px;">No</th>
             <th style="padding:9px 8px;text-align:left;">Nama Lengkap</th>
@@ -3338,7 +3352,7 @@ function renderDaftarHadir(){
               <td style="padding:8px;">${i+1}</td>
               <td style="padding:8px;font-weight:700;">${esc(r.nama||'-')}</td>
               <td style="padding:8px;">${absenStatusBadge(r.status==='Tidak Hadir'?'Alpa':r.status)}</td>
-              <td style="padding:8px;">${esc(r.keterangan||'-')}</td>
+              <td class="td-wrap" style="padding:8px;">${esc(r.keterangan||'-')}</td>
               ${selected&&isManualSesi(selected)&&canManageAbsensi()?`<td style="padding:8px;white-space:nowrap;">
                 ${canEdit?`<button class="manual-edit-btn" onclick="event.stopPropagation();openEditAbsenManual('${r.id}')">✏️ EDIT ABSEN</button>`:'<span style="font-size:10px;color:var(--muted);font-weight:700;">🔒 Terkunci</span>'}
               </td>`:''}
@@ -3394,12 +3408,12 @@ function kembaliDaftarHadir(){ DaftarHadirState.sesiTerpilih=null; renderDaftarH
 function angkatanAnggotaUsername(username){ const u=DB.users.find(x=>x.username===username); return u&&u.angkatan!=null?u.angkatan:null; }
 function daftarHadirTableHtml(list, tableId){
   const id=tableId||'daftar-hadir-table';
-  return `<div class="card table-wrap" style="padding:0;"><table id="${esc(id)}" style="width:100%;border-collapse:collapse;font-size:11.5px;"><thead><tr style="background:var(--bg,#f4f6fa);"><th style="padding:9px 8px;">No</th><th style="padding:9px 8px;text-align:left;">Nama Lengkap</th><th style="padding:9px 8px;text-align:left;">Angkatan</th><th style="padding:9px 8px;text-align:left;">Status</th></tr></thead><tbody>${list.map((r,i)=>`<tr style="border-top:1px solid var(--line);"><td style="padding:8px;">${i+1}</td><td style="padding:8px;font-weight:700;">${esc(r.nama||'-')}</td><td style="padding:8px;">${esc(String(r.angkatan||'-'))}</td><td style="padding:8px;">${absenStatusBadge(r.status==='Tidak Hadir'?'Alpa':r.status)}</td></tr>`).join('')||'<tr><td colspan="4" class="empty-state">Belum ada data.</td></tr>'}</tbody></table></div>`;
+  return `<div class="card table-wrap" style="padding:0;"><table class="tbl-absen" id="${esc(id)}" style="width:100%;border-collapse:collapse;font-size:11.5px;"><thead><tr style="background:var(--bg,#f4f6fa);"><th style="padding:9px 8px;">No</th><th style="padding:9px 8px;text-align:left;">Nama Lengkap</th><th style="padding:9px 8px;text-align:left;">Angkatan</th><th style="padding:9px 8px;text-align:left;">Status</th></tr></thead><tbody>${list.map((r,i)=>`<tr style="border-top:1px solid var(--line);"><td style="padding:8px;">${i+1}</td><td style="padding:8px;font-weight:700;">${esc(r.nama||'-')}</td><td style="padding:8px;">${esc(String(r.angkatan||'-'))}</td><td style="padding:8px;">${absenStatusBadge(r.status==='Tidak Hadir'?'Alpa':r.status)}</td></tr>`).join('')||'<tr><td colspan="4" class="empty-state">Belum ada data.</td></tr>'}</tbody></table></div>`;
 }
 function absensiTableHtml(list, tableId, showUbah){
   return `
     <div class="card table-wrap" style="padding:0;">
-      <table id="${esc(tableId)}" style="width:100%;border-collapse:collapse;font-size:11.5px;">
+      <table class="tbl-absen" id="${esc(tableId)}" style="width:100%;border-collapse:collapse;font-size:11.5px;">
         <thead><tr style="background:var(--bg,#f4f6fa);">
           <th style="padding:9px 8px;text-align:left;">Nama</th>
           <th style="padding:9px 8px;text-align:left;">Kegiatan</th>
@@ -3417,11 +3431,11 @@ function absensiTableHtml(list, tableId, showUbah){
             if(r.diubahOleh) disetujui += ` <span style="color:var(--muted);">(diubah oleh ${esc(r.diubahOleh)})</span>`;
             return `<tr style="border-top:1px solid var(--line);">
               <td style="padding:8px;">${esc(r.nama || (a?a.nama:'Anggota tidak ditemukan'))}</td>
-              <td style="padding:8px;">${esc(sesi?sesi.keterangan||'-':'-')}</td>
+              <td class="td-wrap" style="padding:8px;">${esc(sesi?sesi.keterangan||'-':'-')}</td>
               <td style="padding:8px;">${fmtDate(r.tanggal)}</td>
               <td style="padding:8px;">${absenStatusBadge(r.status)}</td>
-              <td style="padding:8px;">${esc(r.keterangan||'-')}</td>
-              <td style="padding:8px;">${disetujui}</td>
+              <td class="td-wrap" style="padding:8px;">${esc(r.keterangan||'-')}</td>
+              <td class="td-wrap" style="padding:8px;">${disetujui}</td>
               ${showUbah ? `<td style="padding:8px;"><button class="btn-outline" style="padding:4px 10px;font-size:11px;" onclick="openUbahStatusAbsen('${r.id}')">Ubah</button></td>` : ''}
             </tr>`;
           }).join('') || `<tr><td colspan="${showUbah?7:6}" style="padding:16px;text-align:center;color:var(--muted);">Belum ada data absensi.</td></tr>`}
@@ -3467,7 +3481,7 @@ function absensiTableGroupedHtml(list, tableId, showUbah){
         if(!rows.length) return;
         result.push(`<div style="font-size:11.5px;font-weight:900;margin:5px 2px;color:var(--text,#222);">${byGender[g].icon} ${byGender[g].label}</div>`);
         const tableKey=`${tableId}-${sid.replace(/[^a-zA-Z0-9_-]/g,'_')}-${g}-${angkatan.replace(/[^a-zA-Z0-9_-]/g,'_')}`;
-        result.push(`<div class="card table-wrap" style="padding:0;margin-bottom:9px;"><table id="${esc(tableKey)}" data-print-group="${esc(tableId)}" style="width:100%;border-collapse:collapse;font-size:11.5px;"><thead><tr style="background:var(--bg,#f4f6fa);"><th style="padding:9px 8px;text-align:left;">No</th><th style="padding:9px 8px;text-align:left;">Nama</th><th style="padding:9px 8px;text-align:left;">Kegiatan</th><th style="padding:9px 8px;text-align:left;">Tanggal</th><th style="padding:9px 8px;text-align:left;">Status</th><th style="padding:9px 8px;text-align:left;">Keterangan</th><th style="padding:9px 8px;text-align:left;">Disetujui Oleh</th>${showUbah?'<th style="padding:9px 8px;"></th>':''}</tr></thead><tbody>${rows.map((r,i)=>{const a=DB.anggota.find(x=>x.id===r.anggotaId);let disetujui=r.disetujuiOleh?esc(r.disetujuiOleh):'-';if(r.diubahOleh)disetujui+=` <span style="color:var(--muted);">(diubah oleh ${esc(r.diubahOleh)})</span>`;return `<tr style="border-top:1px solid var(--line);"><td style="padding:8px;">${i+1}</td><td style="padding:8px;font-weight:700;">${esc(r.nama||(a?a.nama:'Anggota tidak ditemukan'))}</td><td style="padding:8px;">${esc(kegiatan)}</td><td style="padding:8px;">${fmtDate(r.tanggal||tanggal)}</td><td style="padding:8px;">${absenStatusBadge(r.status)}</td><td style="padding:8px;">${esc(r.keterangan||'-')}</td><td style="padding:8px;">${disetujui}</td>${showUbah?`<td style="padding:8px;"><button class="btn-outline" style="padding:4px 10px;font-size:11px;" onclick="openUbahStatusAbsen('${r.id}')">Ubah</button></td>`:''}</tr>`;}).join('')}</tbody></table></div>`);
+        result.push(`<div class="card table-wrap" style="padding:0;margin-bottom:9px;"><table class="tbl-absen" id="${esc(tableKey)}" data-print-group="${esc(tableId)}" style="width:100%;border-collapse:collapse;font-size:11.5px;"><thead><tr style="background:var(--bg,#f4f6fa);"><th style="padding:9px 8px;text-align:left;">No</th><th style="padding:9px 8px;text-align:left;">Nama</th><th style="padding:9px 8px;text-align:left;">Kegiatan</th><th style="padding:9px 8px;text-align:left;">Tanggal</th><th style="padding:9px 8px;text-align:left;">Status</th><th style="padding:9px 8px;text-align:left;">Keterangan</th><th style="padding:9px 8px;text-align:left;">Disetujui Oleh</th>${showUbah?'<th style="padding:9px 8px;"></th>':''}</tr></thead><tbody>${rows.map((r,i)=>{const a=DB.anggota.find(x=>x.id===r.anggotaId);let disetujui=r.disetujuiOleh?esc(r.disetujuiOleh):'-';if(r.diubahOleh)disetujui+=` <span style="color:var(--muted);">(diubah oleh ${esc(r.diubahOleh)})</span>`;return `<tr style="border-top:1px solid var(--line);"><td style="padding:8px;">${i+1}</td><td style="padding:8px;font-weight:700;">${esc(r.nama||(a?a.nama:'Anggota tidak ditemukan'))}</td><td class="td-wrap" style="padding:8px;">${esc(kegiatan)}</td><td style="padding:8px;">${fmtDate(r.tanggal||tanggal)}</td><td style="padding:8px;">${absenStatusBadge(r.status)}</td><td class="td-wrap" style="padding:8px;">${esc(r.keterangan||'-')}</td><td class="td-wrap" style="padding:8px;">${disetujui}</td>${showUbah?`<td style="padding:8px;"><button class="btn-outline" style="padding:4px 10px;font-size:11px;" onclick="openUbahStatusAbsen('${r.id}')">Ubah</button></td>`:''}</tr>`;}).join('')}</tbody></table></div>`);
       });
     });
   });
@@ -3618,7 +3632,7 @@ function kelolaAbsensiGenderTableHtml(sesi, gender, label, icon){
       return `<tr style="border-top:1px solid var(--line);"><td style="padding:8px;width:32px;">${i+1}</td><td style="padding:8px;font-weight:800;min-width:145px;">${esc(a.nama||'-')}</td><td style="padding:7px;min-width:205px;"><div style="display:flex;gap:5px;flex-wrap:wrap;">${btn('Hadir','✅ Hadir')}${btn('Izin','📝 Izin')}${btn('Sakit','🩺 Sakit')}${btn('Alpa','⚪ Alpa')}</div></td><td style="padding:8px;white-space:nowrap;">${status?absenStatusBadge(status):'<span style="font-size:10.5px;color:var(--muted);">Belum diisi</span>'}</td></tr>`;
     }).join('');
     const title=key==='__belum__'?'⚠️ BELUM DIISI ANGKATAN':`📌 ANGKATAN ${esc(key)}`;
-    return `<div class="card" style="padding:0;overflow:hidden;margin-bottom:10px;"><div style="padding:10px 12px;background:var(--bg,#f4f6fa);font-weight:900;font-size:12.5px;display:flex;justify-content:space-between;align-items:center;"><span>${icon} ${label.toUpperCase()} — ${title}</span><span style="font-size:10px;color:var(--muted);">${grouped[key].length} anggota</span></div><div class="table-wrap"><table style="width:100%;border-collapse:collapse;font-size:11.5px;"><thead><tr><th style="padding:8px;text-align:left;">No</th><th style="padding:8px;text-align:left;">Nama</th><th style="padding:8px;text-align:left;">Isi Absen</th><th style="padding:8px;text-align:left;">Status</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+    return `<div class="card" style="padding:0;overflow:hidden;margin-bottom:10px;"><div style="padding:10px 12px;background:var(--bg,#f4f6fa);font-weight:900;font-size:12.5px;display:flex;justify-content:space-between;align-items:center;"><span>${icon} ${label.toUpperCase()} — ${title}</span><span style="font-size:10px;color:var(--muted);">${grouped[key].length} anggota</span></div><div class="table-wrap"><table class="tbl-absen" style="width:100%;border-collapse:collapse;font-size:11.5px;"><thead><tr><th style="padding:8px;text-align:left;">No</th><th style="padding:8px;text-align:left;">Nama</th><th style="padding:8px;text-align:left;">Isi Absen</th><th style="padding:8px;text-align:left;">Status</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
   }).join('');
 }
 function kelolaAbsensiAktifHtml(sesi){
@@ -3664,6 +3678,33 @@ async function setKelolaAbsensiStatus(sesiId, anggotaId, status){
   toast(a.nama+' → '+status);
   renderAdminAbsenOnline();
 }
+var absensiKeteranganDraft = '';
+function formBuatAbsenOnlineHtml(){
+  const now = new Date();
+  const pad = n=>String(n).padStart(2,'0');
+  const jamMulai = pad(now.getHours())+':'+pad(now.getMinutes());
+  const akhir = new Date(now.getTime()+60*60*1000);
+  const jamSelesai = (akhir.getDate()===now.getDate()) ? pad(akhir.getHours())+':'+pad(akhir.getMinutes()) : '23:59';
+  const angkatan = daftarAngkatanManual();
+  const angkatanHtml = angkatan.length ? angkatan.map(x=>`<label style="display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:9px;padding:7px 9px;background:var(--card,#fff);font-size:11.5px;font-weight:800;cursor:pointer;">
+        <input type="checkbox" class="absen-angkatan-cb" value="${esc(x)}"> Angkatan ${esc(x)}
+      </label>`).join('') : '<div class="hint-box">Belum ada data Angkatan pada anggota aktif.</div>';
+  return `
+    <div class="card" id="form-buat-absen-online">
+      <div style="font-weight:800;font-size:13px;margin-bottom:10px;">📷 Buat Absen Baru</div>
+      <div class="field"><label>Keterangan / Nama Kegiatan</label>
+        <input id="absen-keterangan" value="${esc(absensiKeteranganDraft||'')}" autocomplete="off" spellcheck="false" placeholder="Contoh: Latihan Rutin" oninput="absensiKeteranganDraft=this.value"></div>
+      <div class="manual-live-clock">🕒 Waktu sekarang<br><b id="manual-live-clock">--:--:--</b><div id="manual-live-date" style="font-size:10px;font-weight:600;color:var(--muted);margin-top:2px;">Memuat tanggal...</div></div>
+      <div style="font-size:10.5px;color:var(--muted);margin:8px 0;">Tanggal dan jam mulai otomatis diambil dari waktu perangkat saat tombol BUKA ABSEN ditekan.</div>
+      <div class="field"><label>Jam Tutup</label><input type="time" id="absen-jam-selesai" value="${jamSelesai}"></div>
+      <div class="field">
+        <label>Angkatan yang Boleh Absen</label>
+        <div style="font-size:11px;color:var(--muted);margin:4px 0 8px;">Hanya anggota dari angkatan yang dicentang yang bisa mengisi absen ini.</div>
+        <div style="display:flex;flex-wrap:wrap;gap:7px;">${angkatanHtml}</div>
+      </div>
+      <button class="btn-primary" style="width:100%;margin-top:10px;" onclick="mulaiAbsenBaru()">▶ BUKA ABSEN</button>
+    </div>`;
+}
 function renderAdminAbsenOnline(){
   if(!canManageAbsensi()){ document.getElementById('content').innerHTML = '<div class="empty-state">Anda tidak memiliki akses ke halaman ini.</div>'; return; }
   ensureAlpaProcessed();
@@ -3698,7 +3739,11 @@ function renderAdminAbsenOnline(){
   ` : '';
 
   const target = document.getElementById('kelola-absen-mode-content') || document.getElementById('content');
+  const formBuatHtml = sesiUntukTutup ? `
+    <div class="card" style="margin-bottom:12px;"><div style="font-size:12px;font-weight:800;">🔴 Absen sedang berjalan</div>
+    <div style="font-size:11px;color:var(--muted);margin-top:4px;">Tutup absen aktif di atas terlebih dahulu jika ingin membuat absen baru.</div></div>` : formBuatAbsenOnlineHtml();
   target.innerHTML = `
+    ${formBuatHtml}
     ${pendingHtml}
     <div class="section-title">Hasil Absen</div>
     ${daftarTanggalKegiatanHtml(semuaHasil)}
@@ -3709,6 +3754,7 @@ function renderAdminAbsenOnline(){
     <div style="font-size:11px;color:var(--muted);margin:5px 2px 8px;">${filterSesi==='SEMUA'?'📚 Semua tanggal & kegiatan ditampilkan terpisah.':'📌 Menampilkan hasil untuk tanggal/kegiatan yang dipilih.'}</div>
     ${absensiTableGroupedHtml(hasil, 'absen-table', true)}
   `;
+  if(!sesiUntukTutup && typeof startManualLiveClock==='function') startManualLiveClock();
 }
 async function mulaiAbsenBaru(){
   if(!canManageAbsensi()) return;
@@ -3721,14 +3767,16 @@ async function mulaiAbsenBaru(){
     renderAdminAbsen();
     return;
   }
-  const tanggal = document.getElementById('absen-tanggal').value;
-  const jamMulai = document.getElementById('absen-jam-mulai').value;
+  const _now = new Date();
+  const tanggal = todayStr();
+  const jamMulai = localTimeStr(_now);
   const jamSelesai = document.getElementById('absen-jam-selesai').value;
   const keterangan = document.getElementById('absen-keterangan').value.trim();
   const angkatanTarget = [...document.querySelectorAll('.absen-angkatan-cb:checked')].map(x=>String(x.value));
   if(!angkatanTarget.length){ toast('Pilih minimal satu angkatan yang boleh absen.'); return; }
   if(!tanggal || !jamMulai || !jamSelesai){ toast('Isi tanggal, jam mulai, dan jam tutup terlebih dahulu.'); return; }
   if(!keterangan){ toast('Isi keterangan/nama kegiatan terlebih dahulu.'); return; }
+  if(jamSelesai<=jamMulai){ toast('Jam tutup harus lebih besar dari jam mulai.'); return; }
   const sesiBaru = {
     id:uid(), tanggal, jamMulai, jamSelesai, keterangan, angkatanTarget,
     dibukaOleh:session.nama, waktuDibuka:new Date().toISOString(), alpaDiproses:false,
@@ -4005,7 +4053,7 @@ function renderManualSession(sesi){
       }).join('');
       return `<div style="margin:0 0 10px;">
         <div style="font-weight:900;font-size:12px;padding:8px 10px;background:var(--bg,#f4f6fa);border-bottom:1px solid var(--line);">${icon} ${label.toUpperCase()} <span style="font-size:10px;color:var(--muted);">(${arr.length} anggota)</span></div>
-        <div class="table-wrap"><table style="width:100%;border-collapse:collapse;font-size:11.5px;">
+        <div class="table-wrap"><table class="tbl-absen" style="width:100%;border-collapse:collapse;font-size:11.5px;">
           <thead><tr><th style="padding:9px 8px;text-align:left;">No</th><th style="padding:9px 8px;text-align:left;">Nama Lengkap</th><th style="padding:9px 8px;text-align:left;">Pilihan Status</th><th style="padding:9px 8px;text-align:left;">Status Kehadiran</th></tr></thead>
           <tbody>${rows}</tbody>
         </table></div>
@@ -6157,7 +6205,7 @@ function rekapAbsensiPerAngkatanHtml(anggotaList, bulanDipilih){
         <span style="font-size:12px;font-weight:900;">🏷️ ${key==='Belum Diisi'?key:'Angkatan '+esc(key)} <small style="display:block;font-size:10px;color:var(--muted);font-weight:600;margin-top:3px;">${list.length} anggota · Hadir ${subtotal.Hadir} · Alpa ${subtotal.Alpa}</small></span>
         <span style="font-size:11px;font-weight:800;color:var(--blue);">Lihat ▾</span>
       </summary>
-      <div class="table-wrap"><table style="width:100%;border-collapse:collapse;font-size:11px;">
+      <div class="table-wrap"><table class="tbl-absen" style="width:100%;border-collapse:collapse;font-size:11px;">
         <thead><tr style="background:#fafbfe;">
           <th style="padding:8px;text-align:left;">No</th><th style="padding:8px;text-align:left;">Nama</th>
           <th style="padding:8px;text-align:center;">Hadir</th><th style="padding:8px;text-align:center;">Izin</th>
