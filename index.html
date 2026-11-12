@@ -929,16 +929,9 @@ table{max-width:100%;}
         </div>
         <div class="field"><label>Alamat</label><input id="reg-alamat" placeholder="Alamat domisili"></div>
         <div class="field"><label>Tanggal Lahir</label><input id="reg-tgl" type="date"></div>
-        <div class="field"><label>Nomor Angkatan</label>
-          <select id="reg-angkatan">
-            <option value="16">Angkatan 16 (2023)</option>
-            <option value="17">Angkatan 17 (2024)</option>
-            <option value="18" selected>Angkatan 18 (2025)</option>
-            <option value="19">Angkatan 19 (2025)</option>
-            <option value="20">Angkatan 20 (2025)</option>
-            <option value="21">Angkatan 21 (2026)</option>
-            <option value="22">Angkatan 22 (2026)</option>
-          </select>
+        <div class="field"><label>Angkatan Pendaftaran</label>
+          <input id="reg-angkatan-tampil" value="Ditentukan otomatis oleh Admin" disabled style="opacity:.75;">
+          <div style="font-size:10.5px;color:var(--muted);margin-top:4px;">Angkatan ditetapkan otomatis sesuai angkatan yang sedang dibuka Admin.</div>
         </div>
         <div class="field"><label>Pilih Krida</label>
           <select id="reg-krida">
@@ -948,8 +941,8 @@ table{max-width:100%;}
             <option>Krida Penanggulangan Bencana</option>
           </select>
         </div>
-        <div class="field"><label>Jabatan</label><input value="Anggota Biasa" disabled style="opacity:.65;"></div>
-        <div style="font-size:10.5px;color:var(--muted);margin:-8px 0 12px;">Jabatan struktur (Ketua, Sekretaris, dll) hanya bisa ditetapkan oleh Pembina.</div>
+        <div class="field"><label>Jabatan</label><input value="Calon Anggota" disabled style="opacity:.65;"></div>
+        <div style="font-size:10.5px;color:var(--muted);margin:-8px 0 12px;">Jabatan dan status Calon Anggota ditetapkan otomatis. Hanya Admin yang dapat meresmikan dan mengubah jabatan.</div>
         <button class="btn-primary btn-gold" onclick="doRegister()">Daftar Sekarang</button>
         <div class="switch-line">Sudah punya akun? <b onclick="showScreen('login')">Masuk</b></div>
       </div>
@@ -1149,6 +1142,14 @@ table{max-width:100%;}
     const { error } = await client.from('app_data').upsert({ key, value, updated_at: new Date().toISOString() });
     if(error) throw error;
   }
+  function subscribeAppData(onChange){
+    const ch = client.channel('prasbharaku-app-data-sync');
+    ch.on('postgres_changes', {event:'*', schema:'public', table:'app_data'}, payload=>{
+      try{ onChange(payload); }catch(e){ console.error('App data realtime handler:',e); }
+    });
+    ch.subscribe();
+    return { close:()=>client.removeChannel(ch) };
+  }
   function onPasswordRecovery(cb){
     client.auth.onAuthStateChange((event, session)=>{
       if(event === 'PASSWORD_RECOVERY') cb(session);
@@ -1181,7 +1182,7 @@ table{max-width:100%;}
     getCurrentUidAsync, reauthenticate, updatePassword, updateEmail,
     sendPasswordResetEmail, adminCreateAccount,
     usersSelectAll, usersSelectOne, usersUpdateUidOnly, usersUpsertAll, usersDelete, bootstrapUserProfile,
-    appDataGet, appDataSet, onPasswordRecovery,
+    appDataGet, appDataSet, subscribeAppData, onPasswordRecovery,
     uploadToStorage, deleteFromStorage, openBroadcastChannel,
     client, secondaryClient,
   };
@@ -1474,6 +1475,89 @@ const TAUTAN_ALBUM_GOOGLE_PHOTOS = "https://photos.app.goo.gl/uLa8SPCPtiNaQ5wCA"
 const TAUTAN_FOLDER_GOOGLE_DRIVE = "https://drive.google.com/drive/folders/1MRqJmaejeiigLDg8ge-6hgK6dJUf33aU";
 function usernameToEmail(u){ return (u||'').trim().toLowerCase()+'@'+FAKE_EMAIL_DOMAIN; }
 function hasRealRecoveryEmail(authEmail){ return !!authEmail && !authEmail.toLowerCase().endsWith('@'+FAKE_EMAIL_DOMAIN); }
+
+/* KENAIKAN KELAS TAHUNAN — aman untuk data lama dan idempoten.
+   Tahun ajaran Indonesia diasumsikan dimulai Juli. Setiap anggota menyimpan
+   penanda tahun terakhir agar proses tidak menggandakan kenaikan kelas. */
+function tahunAjaranMulaiSekarang(){
+  const d=new Date();
+  return d.getMonth()>=6 ? d.getFullYear() : d.getFullYear()-1;
+}
+function jenjangSekolahAnggota(a){
+  const explicit=String(a?.jenjangSekolah||a?.jenjang||a?.tingkatSekolah||'').trim().toUpperCase();
+  if(['SD','MI'].includes(explicit)) return 'SD';
+  if(['SMP','MTS','MTs'.toUpperCase()].includes(explicit)) return 'SMP';
+  if(['SMA','SMK','MA'].includes(explicit)) return 'SMA';
+  const n=String(a?.sekolah||'').trim().toUpperCase();
+  if(/\b(SDN|SD|MIN|MI)\b/.test(n)) return 'SD';
+  if(/\b(SMPN|SMP|MTSN|MTS)\b/.test(n)) return 'SMP';
+  if(/\b(SMAN|SMKS|SMKN|MAN|SMA|SMK|MA)\b/.test(n)) return 'SMA';
+  return '';
+}
+function angkaKelasSekolah(kelas){
+  const raw=String(kelas||'').trim().toUpperCase();
+  const roman=[['XII',12],['XI',11],['X',10],['IX',9],['VIII',8],['VII',7],['VI',6],['V',5],['IV',4],['III',3],['II',2],['I',1]];
+  for(const [r,n] of roman){
+    if(new RegExp('(^|[^A-Z])'+r+'($|[^A-Z])').test(raw)) return {angka:n,format:'roman',token:r};
+  }
+  const m=raw.match(/(^|[^0-9])(1[0-2]|[1-9])($|[^0-9])/);
+  return m ? {angka:Number(m[2]),format:'number',token:m[2]} : null;
+}
+async function prosesKenaikanKelasTahunan(){
+  if(!DB.settings) DB.settings={};
+  const tahunSekarang=tahunAjaranMulaiSekarang();
+  const tersimpan=Number(DB.settings.tahunKenaikanKelasTerakhir);
+  // Instalasi pertama: jadikan tahun ajaran saat ini sebagai titik awal.
+  // Tidak ada anggota yang langsung dinaikkan saat fitur pertama kali dipasang.
+  if(!Number.isFinite(tersimpan)||tersimpan<2000){
+    DB.settings.tahunKenaikanKelasTerakhir=tahunSekarang;
+    await save('settings');
+    return;
+  }
+  if(tahunSekarang<=tersimpan) return;
+  let adaPerubahan=false;
+  const batas={SD:6,SMP:9,SMA:12};
+  const anggota=Array.isArray(DB.anggota)?DB.anggota:[];
+  for(const a of anggota){
+    if(!a || String(a.kategori||'').trim().toLowerCase()!=='pelajar') continue;
+    const level=jenjangSekolahAnggota(a);
+    const parsed=angkaKelasSekolah(a.kelas);
+    if(!level||!parsed) continue; // Sekolah/kelas yang tidak dikenali tidak disentuh.
+    const mulaiDiproses=Number(a.tahunAjaranTerakhirDiproses);
+    const tahunAwal=Number.isFinite(mulaiDiproses)&&mulaiDiproses>=2000?mulaiDiproses:tersimpan;
+    if(tahunAwal>=tahunSekarang) continue;
+    let angka=parsed.angka;
+    let lulus=false;
+    for(let th=tahunAwal+1;th<=tahunSekarang;th++){
+      if(angka>=batas[level]){ lulus=true; break; }
+      angka++;
+    }
+    if(lulus){
+      // Status akun/keanggotaan, jabatan, angkatan, dan riwayat tidak diubah.
+      a.kategori='Alumni';
+      a.sekolahSebelumnya=a.sekolah||'';
+      a.jenjangLulus=level;
+      a.tahunLulusSekolah=String(tahunSekarang);
+      a.sekolah='';
+      a.kelas='';
+    }else{
+      const romans={1:'I',2:'II',3:'III',4:'IV',5:'V',6:'VI',7:'VII',8:'VIII',9:'IX',10:'X',11:'XI',12:'XII'};
+      if(parsed.format==='number') a.kelas=String(angka);
+      else {
+        const re=new RegExp('(^|[^A-Z])'+parsed.token+'($|[^A-Z])');
+        a.kelas=String(a.kelas||'').replace(re,(whole,left,right)=>left+(romans[angka]||String(angka))+right);
+      }
+    }
+    a.tahunAjaranTerakhirDiproses=tahunSekarang;
+    adaPerubahan=true;
+  }
+  // Simpan data anggota terlebih dahulu. Penanda per anggota mencegah kenaikan
+  // ganda jika penyimpanan pengaturan gagal atau aplikasi dibuka ulang.
+  if(adaPerubahan) await save('anggota');
+  DB.settings.tahunKenaikanKelasTerakhir=tahunSekarang;
+  await save('settings');
+}
+
 async function loadAll(){
   const blobKeys = ['anggota','berita','galeri','jadwal','chat','settings','absensi','absensiSesi','absensiSampah','surat','pengajuan','galeriAnggota','voicemail','walkieChannels','walkiePermintaan','medsos','setoran','pengeluaran','iuranJadwal','iuranBayar','pembinaData'];
   for(const k of blobKeys){
@@ -1530,6 +1614,8 @@ async function loadAll(){
   if(DB.settings.aksesKode === undefined){ DB.settings.aksesKode = ''; needsSeed = true; }
   if(DB.settings.modeIzin === undefined){ DB.settings.modeIzin = false; needsSeed = true; }
   if(DB.settings.pendaftaranTerkunci === undefined){ DB.settings.pendaftaranTerkunci = false; needsSeed = true; }
+  if(DB.settings.pendaftaranCalonAktif === undefined){ DB.settings.pendaftaranCalonAktif = false; needsSeed = true; }
+  if(DB.settings.angkatanPendaftaran === undefined){ DB.settings.angkatanPendaftaran = null; needsSeed = true; }
   if(!DB.surat){ DB.surat = []; needsSeed = true; }
   if(!DB.pengajuan){ DB.pengajuan = []; needsSeed = true; }
   if(!DB.galeriAnggota){ DB.galeriAnggota = []; needsSeed = true; }
@@ -1546,6 +1632,10 @@ async function loadAll(){
   if(!DB.pengeluaran){ DB.pengeluaran = []; needsSeed = true; }
   if(!DB.pembinaData){ DB.pembinaData = {}; needsSeed = true; }
   if(DB.settings.walkieMode === undefined){ DB.settings.walkieMode = 'komando'; needsSeed = true; }
+  // Kenaikan kelas diproses sekali per tahun ajaran (mulai Juli).
+  // Kesalahan simpan tidak menghentikan proses boot aplikasi.
+  try{ await prosesKenaikanKelasTahunan(); }
+  catch(e){ console.error('Kenaikan kelas tahunan belum berhasil disimpan:',e); }
   if(usersJustSeeded){ await ensureSeedAuthAccounts(); }
   if(needsSeed){ await saveAllSeeded(); }
 }
@@ -1801,10 +1891,12 @@ async function doRegister(){
   const alamat = document.getElementById('reg-alamat').value.trim();
   const tgl = document.getElementById('reg-tgl').value;
   const krida = document.getElementById('reg-krida').value;
-  const angkatan = Number(document.getElementById('reg-angkatan').value);
+  const angkatan = Number(DB.settings.angkatanPendaftaran);
   const gender = document.getElementById('reg-gender').value;
   const err = document.getElementById('reg-error');
-  if(DB.settings.pendaftaranTerkunci){ err.textContent='Pendaftaran anggota baru sedang ditutup. Hubungi Pembina.'; err.style.display='block'; return; }
+  if(!DB.settings.pendaftaranCalonAktif){ err.textContent='Pendaftaran Calon Anggota sedang ditutup. Hubungi Admin.'; err.style.display='block'; return; }
+  if(DB.settings.pendaftaranTerkunci){ err.textContent='Pendaftaran anggota baru sedang ditutup. Hubungi Admin.'; err.style.display='block'; return; }
+  if(!Number.isFinite(angkatan) || !getAngkatanList().includes(angkatan)){ err.textContent='Admin belum menentukan angkatan pendaftaran. Silakan hubungi Admin.'; err.style.display='block'; return; }
   if(!nama||!username||!pass){ err.textContent='Nama, username, dan kata sandi wajib diisi.'; err.style.display='block'; return; }
   if(pass.length<6){ err.textContent='Kata sandi minimal 6 karakter.'; err.style.display='block'; return; }
   if(kategori==='Pelajar' && (!kelas||!sekolah)){ err.textContent='Kelas dan Asal Sekolah wajib diisi untuk Pelajar.'; err.style.display='block'; return; }
@@ -1842,8 +1934,8 @@ async function doRegister(){
   const mintaIzin = !!DB.settings.modeIzin;
   // Jabatan pendaftar mandiri SELALU "Anggota Biasa" — jabatan tinggi hanya
   // bisa ditetapkan oleh Pembina lewat halaman Kelola Anggota.
-  DB.anggota.unshift({id, nama, gender, kategori, kelas, alamat, sekolah, universitas, tglLahir:tgl, krida, angkatan, jabatan:'Anggota Biasa', status:'Menunggu Persetujuan', joined:new Date().toISOString().slice(0,10), ekta:false, noKta:null, ektaTglMulai:null, ektaTglBerakhir:null, ektaDicabut:false, ektaRiwayat:[], foto:null});
-  const newUser = {uid:newUid, username, role:'anggota', nama, nip:null, joined:new Date().toISOString().slice(0,10), anggotaId:id, foto:null, authEmail, angkatan, krida, jabatan:'Anggota Biasa'};
+  DB.anggota.unshift({id, nama, gender, kategori, kelas, alamat, sekolah, universitas, tglLahir:tgl, krida, angkatan, jabatan:'Calon Anggota', status:(mintaIzin?'Menunggu Persetujuan':'Calon Anggota'), statusKeanggotaan:'Calon Anggota', joined:new Date().toISOString().slice(0,10), ekta:false, noKta:null, ektaTglMulai:null, ektaTglBerakhir:null, ektaDicabut:false, ektaRiwayat:[], foto:null});
+  const newUser = {uid:newUid, username, role:'anggota', nama, nip:null, joined:new Date().toISOString().slice(0,10), anggotaId:id, foto:null, authEmail, angkatan, krida, jabatan:'Calon Anggota'};
   DB.users.push(newUser);
   try{
     await save('anggota'); await saveUser(newUser);
@@ -1866,10 +1958,32 @@ function doLogout(){
   walkieLeaveChannel().catch(()=>{}); // pastikan mic, PC, dan AudioContext walkie-talkie berhenti total
   window.FB.signOut().catch(()=>{});
   stopPresenceHeartbeat();
+  stopAppDataRealtime();
   session = null;
   closeDrawer();
   document.getElementById('app-shell').style.display='none';
   showScreen('login');
+}
+
+/* ---------------- Sinkronisasi realtime data aplikasi ---------------- */
+let _appDataRealtime = null;
+function stopAppDataRealtime(){
+  if(_appDataRealtime){ try{_appDataRealtime.close();}catch(e){} _appDataRealtime=null; }
+}
+function startAppDataRealtime(){
+  stopAppDataRealtime();
+  if(!session || !window.FB.subscribeAppData) return;
+  _appDataRealtime=window.FB.subscribeAppData(async payload=>{
+    const key=payload?.new?.key || payload?.old?.key;
+    const financeKeys=['setoran','iuranBayar','pengeluaran','iuranJadwal'];
+    if(!financeKeys.includes(key)) return;
+    try{
+      const latest=await window.FB.appDataGet(key);
+      DB[key]=latest || [];
+      const financeViews=['keuangan','pengeluaran-bendahara','iuran-bendahara','admin-persetujuan-pengeluaran','iuran'];
+      if(financeViews.includes(currentView)) navigate(currentView,{silent:true});
+    }catch(e){ console.warn('Gagal memperbarui data keuangan realtime:',e); }
+  });
 }
 
 /* ---------------- App shell ---------------- */
@@ -1883,6 +1997,7 @@ function enterApp(){
   document.getElementById('notif-count').textContent = DB.berita.length;
   buildDrawer();
   startPresenceHeartbeat();
+  startAppDataRealtime();
   // Bersihkan Sampah Keuangan yang sudah lewat 21 hari. Hanya data soft-delete yang diproses.
   if(session && (session.role==='admin' || session.role==='anggota')){
     try{ window.FB.client.rpc('purge_keuangan_sampah'); }catch(e){}
@@ -6316,6 +6431,8 @@ function renderRekapAnggota(){
   });
   const utamaCounts=JABATAN_UTAMA_LIST.map(j=>[j,all.filter(a=>getJabatanUtama(a)===j).length]);
   const tambahanCounts=JABATAN_TAMBAHAN_LIST.map(j=>[j,all.filter(a=>getJabatanTambahan(a)===j).length]).filter(x=>x[1]>0);
+  const instrukturMudaAlumni=all.filter(a=>getJabatanUtama(a)==='Instruktur Muda');
+  const daftarAlumni=all.filter(a=>String(a.kategori||'').trim().toLowerCase()==='alumni' && !['Instruktur Muda','Pembina'].includes(getJabatanUtama(a)));
   const card=(ic,label,count,onclick,sub='Klik untuk melihat data')=>`<div class="stat-card" data-rekap-card="${label==='Total Anggota'?'all':label==='Aktif'?'aktif':label==='Non Aktif'?'nonaktif':'angkatan'}" style="cursor:pointer;">
     <div class="stat-top"><div class="stat-ic" style="background:${var_blue()}">${ic}</div><div class="stat-label">${label}</div></div>
     <div class="stat-val">${count}</div><div class="stat-sub">${sub}</div>
@@ -6370,6 +6487,7 @@ function renderRekapAnggota(){
       <div class="admin-row rekap-menu-row" data-rekap-menu="angkatan" role="button" tabindex="0" style="cursor:pointer;"><div class="grow"><div class="name">🏷️ Total Angkatan</div><div class="meta">Lihat data peserta berdasarkan angkatan</div></div><b>${angkatan.length}</b> ›</div>
       <div class="admin-row rekap-menu-row" data-rekap-menu="school" role="button" tabindex="0" style="cursor:pointer;"><div class="grow"><div class="name">🎓 Asal Sekolah / Universitas</div><div class="meta">Klik nama sekolah/universitas untuk melihat peserta</div></div><b>${Object.keys(sekolahMap).length}</b> ›</div>
       <div class="admin-row rekap-menu-row" data-rekap-menu="jabatan" role="button" tabindex="0" style="cursor:pointer;"><div class="grow"><div class="name">🪪 Jabatan</div><div class="meta">Jabatan Utama dan Jabatan Tambahan</div></div><b>${JABATAN_UTAMA_LIST.length+JABATAN_TAMBAHAN_LIST.length}</b> ›</div>
+      <div class="admin-row rekap-menu-row" data-rekap-menu="alumni" role="button" tabindex="0" style="cursor:pointer;"><div class="grow"><div class="name">🎓 Alumni</div><div class="meta">Anggota yang telah lulus sekolah atau pendidikan sebelumnya</div></div><b>${daftarAlumni.length}</b> ›</div>
     </div>
 
     <div class="section-title">🏷️ Berdasarkan Angkatan</div>
@@ -6388,6 +6506,12 @@ function renderRekapAnggota(){
 
     <div class="section-title">⚙️ Jabatan Tambahan</div>
     <div class="card">${tambahanCounts.map(([j,c])=>`<div class="admin-row rekap-group-row" data-rekap-type="tambahan" data-rekap-key="${esc(String(j))}" role="button" tabindex="0" style="cursor:pointer;"><div class="grow"><div class="name">${esc(j)}</div><div class="meta">Klik untuk melihat peserta</div></div><b>${c}</b> ›</div>`).join('')||'<div class="empty-state">Belum ada jabatan tambahan.</div>'}</div>
+
+
+    <div class="section-title">🎓 Alumni</div>
+    <div class="card">
+      ${daftarAlumni.map(a=>`<div class="admin-row rekap-member-row" data-rekap-id="${esc(String(a.id||''))}" role="button" tabindex="0" style="cursor:pointer;">${avatarHtml(a,38)}<div class="grow"><div class="name">${esc(a.nama||'-')}</div><div class="meta">Alumni · Angkatan ${esc(a.angkatan||'-')} · ${esc(getJabatanUtama(a)||'Tanpa jabatan')}</div></div>›</div>`).join('')||'<div class="empty-state">Belum ada Alumni yang belum ditetapkan sebagai Instruktur Muda.</div>'}
+    </div>
   `;
 }
 
@@ -6414,6 +6538,7 @@ function renderRekapAnggota(){
       else if(kind==='angkatan') rekapAnggotaDetail('🏷️ Total Angkatan',DB.anggota.filter(a=>String(a.angkatan||'')));
       else if(kind==='school') rekapAnggotaDetail('🎓 Asal Sekolah / Universitas',DB.anggota.filter(a=>String(a.sekolah||a.universitas||'').trim()));
       else if(kind==='jabatan') rekapAnggotaDetail('🪪 Jabatan',DB.anggota);
+      else if(kind==='alumni') rekapAnggotaDetail('🎓 Alumni',DB.anggota.filter(a=>String(a.kategori||'').trim().toLowerCase()==='alumni' && !['Instruktur Muda','Pembina'].includes(getJabatanUtama(a))));
       return;
     }
     const card=el.closest('[data-rekap-card]');
@@ -6661,7 +6786,7 @@ function anggotaFormHtml(a, selfEdit, secretaryEdit){
         <option value="Lainnya" ${a.agama==='Lainnya'?'selected':''}>Lainnya</option>
       </select>
     </div>
-    <div class="field"><label>Status</label><select id="f-status"><option ${a.status==='Aktif'?'selected':''}>Aktif</option><option ${a.status==='Menunggu Persetujuan'?'selected':''}>Menunggu Persetujuan</option><option ${a.status==='Nonaktif'?'selected':''}>Nonaktif</option></select></div>
+    <div class="field"><label>Status</label><select id="f-status"><option ${a.status==='Aktif'?'selected':''}>Aktif</option><option ${a.status==='Calon Anggota'?'selected':''}>Calon Anggota</option><option ${a.status==='Menunggu Persetujuan'?'selected':''}>Menunggu Persetujuan</option><option ${a.status==='Nonaktif'?'selected':''}>Nonaktif</option></select></div>
     ${accountFieldsHtml(a)}`}
   `;
 }
@@ -7114,6 +7239,21 @@ function renderAdminAkses(){
   const pendingCount = DB.pengajuan.filter(p=>p.status==='Menunggu').length;
   document.getElementById('content').innerHTML = `
     <div class="card">
+      <div class="section-title" style="margin:0 0 8px;">👤 Pendaftaran Calon Anggota</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px;">Jika AKTIF, pendaftar baru otomatis menjadi Calon Anggota. Jabatan dan angkatan tidak dapat dipilih sendiri oleh pendaftar.</div>
+      <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:12px;">
+        <input type="checkbox" id="f-pendaftaran-calon" ${s.pendaftaranCalonAktif?'checked':''} style="width:20px;height:20px;">
+        <span>Buka Pendaftaran Calon Anggota</span>
+      </label>
+      <div class="field"><label>Angkatan yang Sedang Dibuka</label>
+        <select id="f-angkatan-pendaftaran">
+          <option value="">— Pilih angkatan —</option>
+          ${getAngkatanList().map(n=>`<option value="${n}" ${Number(s.angkatanPendaftaran)===n?'selected':''}>Angkatan ${n} (${tahunMasukAngkatan(n)})</option>`).join('')}
+        </select>
+      </div>
+      <button class="btn-primary" onclick="savePendaftaranCalon()">Simpan Pengaturan Calon Anggota</button>
+    </div>
+    <div class="card">
       <div class="section-title" style="margin:0 0 8px;">🔑 Kode Akses Pendaftaran</div>
       <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px;">Anggota baru harus memasukkan kode ini saat mendaftar. Kosongkan untuk menonaktifkan (siapa saja bisa mendaftar tanpa kode).</div>
       <div class="field"><label>Kode Akses</label><input id="f-akses-kode" value="${esc(s.aksesKode||'')}" placeholder="Contoh: PRSB2026"></div>
@@ -7203,6 +7343,17 @@ function openEditPembinaByAdmin(username){
     closeModal(); toast('Data Pembina diperbarui.'); renderAdminAkses();
   });
 }
+async function savePendaftaranCalon(){
+  const aktif = document.getElementById('f-pendaftaran-calon').checked;
+  const angkatanVal = document.getElementById('f-angkatan-pendaftaran').value;
+  if(aktif && !angkatanVal){ toast('Pilih angkatan yang akan dibuka sebelum mengaktifkan pendaftaran calon anggota.'); return; }
+  if(angkatanVal && !getAngkatanList().includes(Number(angkatanVal))){ toast('Angkatan yang dipilih tidak terdaftar.'); return; }
+  DB.settings.pendaftaranCalonAktif = aktif;
+  DB.settings.angkatanPendaftaran = angkatanVal ? Number(angkatanVal) : null;
+  await save('settings');
+  toast(aktif ? ('Pendaftaran Calon Anggota dibuka untuk Angkatan '+angkatanVal+'.') : 'Pendaftaran Calon Anggota ditutup. Data pendaftar lama tetap tersimpan.');
+  renderAdminAkses();
+}
 async function saveAksesKode(){
   DB.settings.aksesKode = document.getElementById('f-akses-kode').value.trim();
   await save('settings'); toast('Kode akses disimpan.');
@@ -7241,7 +7392,14 @@ async function setujuiPengajuan(id){
   const p = DB.pengajuan.find(x=>x.id===id); if(!p) return;
   p.status = 'Disetujui';
   await save('pengajuan');
-  toast(p.nama+' disetujui & bisa masuk sekarang.');
+  // Persetujuan akun hanya memberi izin login; status keanggotaan tetap Calon Anggota.
+  const anggota = (DB.anggota||[]).find(a=>a.nama && a.nama.trim().toLowerCase()===String(p.nama||'').trim().toLowerCase() && a.status==='Menunggu Persetujuan');
+  if(anggota){
+    anggota.status = 'Calon Anggota';
+    anggota.statusKeanggotaan = 'Calon Anggota';
+    await save('anggota');
+  }
+  toast(p.nama+' disetujui. Status keanggotaan tetap Calon Anggota sampai diresmikan Admin.');
   renderAdminPengajuan();
 }
 async function tolakPengajuan(id){
@@ -7349,11 +7507,16 @@ function rupiahNumber(value){
   return digits ? Number(digits) : 0;
 }
 
-function totalUangMasuk(){ return (DB.setoran||[]).filter(r=>!r.deleted_at).reduce((s,r)=>s+(Number(r.jumlah)||0),0); }
+// Satu perhitungan kas: setoran umum + pembayaran jadwal iuran - pengeluaran disetujui.
+// Pembayaran iuran disimpan pada DB.iuranBayar, sehingga wajib masuk ke saldo kas.
+function totalSetoranMasuk(){ return (DB.setoran||[]).filter(r=>!r.deleted_at).reduce((s,r)=>s+(Number(r.jumlah)||0),0); }
+function totalIuranMasuk(){ return (DB.iuranBayar||[]).filter(r=>!r.deleted_at).reduce((s,r)=>s+(Number(r.jumlah)||0),0); }
+function totalUangMasuk(){ return totalSetoranMasuk() + totalIuranMasuk(); }
 function setoranByAnggota(anggotaId){ return (DB.setoran||[]).filter(r=>r.anggotaId===anggotaId && !r.deleted_at); }
-function sudahMembayar(anggotaId){ return setoranByAnggota(anggotaId).length>0; }
+function sudahMembayar(anggotaId){ return setoranByAnggota(anggotaId).length>0 || (DB.iuranBayar||[]).some(r=>r.anggotaId===anggotaId && !r.deleted_at); }
 function totalPengeluaranDisetujui(){ return (DB.pengeluaran||[]).filter(p=>p.status==='Disetujui' && !p.deleted_at).reduce((s,p)=>s+(Number(p.jumlah)||0),0); }
-function saldoKas(){ return Math.max(0, totalUangMasuk() - totalPengeluaranDisetujui()); }
+// Jangan membatasi saldo ke nol: jika ada selisih/defisit, nilai sebenarnya tetap terlihat.
+function saldoKas(){ return totalUangMasuk() - totalPengeluaranDisetujui(); }
 function pengeluaranStatusChip(status){
   if(status==='Disetujui') return '<span class="chip chip-active">🟢 DISETUJUI</span>';
   if(status==='Ditolak') return '<span class="chip" style="background:#fdecec;color:#a11;">🔴 DITOLAK</span>';
@@ -7444,6 +7607,12 @@ function renderIuranBendahara(){
   if(!isBendaharaJabatan()){document.getElementById('content').innerHTML='<div class="empty-state">Hanya Bendahara yang bisa mengelola iuran.</div>';return;}
   const jadwal=(DB.iuranJadwal||[]).sort((a,b)=>new Date(b.tanggal||0)-new Date(a.tanggal||0));
   document.getElementById('content').innerHTML=`<div class="section-title">🪙 Kelola Iuran</div>
+    <div class="stat-grid" style="margin-top:0;margin-bottom:14px;">
+      <div class="stat-card"><div class="stat-top"><div class="stat-ic" style="background:${var_gold()}">🪙</div><div class="stat-label">Iuran Masuk</div></div><div class="stat-val" style="font-size:15px;">Rp${totalIuranMasuk().toLocaleString('id-ID')}</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-ic" style="background:${var_blue()}">💰</div><div class="stat-label">Total Pemasukan</div></div><div class="stat-val" style="font-size:15px;">Rp${totalUangMasuk().toLocaleString('id-ID')}</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-ic" style="background:${var_red()}">💸</div><div class="stat-label">Pengeluaran</div></div><div class="stat-val" style="font-size:15px;">Rp${totalPengeluaranDisetujui().toLocaleString('id-ID')}</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-ic" style="background:${var_green()}">🏦</div><div class="stat-label">Saldo Kas</div></div><div class="stat-val" style="font-size:15px;">Rp${saldoKas().toLocaleString('id-ID')}</div></div>
+    </div>
     <div class="card" style="margin-bottom:12px;"><button class="btn-primary" style="width:100%;" onclick="openBuatIuranModal()">➕ BUAT JADWAL IURAN MINGGUAN</button></div>
     <div class="section-title">Jadwal Iuran</div><div class="card" id="iuran-jadwal-list"></div>`;
   document.getElementById('iuran-jadwal-list').innerHTML=jadwal.map(j=>{
@@ -7504,8 +7673,12 @@ function renderKeuangan(){
       <div class="stat-card"><div class="stat-top"><div class="stat-ic" style="background:${var_blue()}">👥</div><div class="stat-label">Total Peserta</div></div><div class="stat-val">${totalPeserta}</div></div>
       <div class="stat-card"><div class="stat-top"><div class="stat-ic" style="background:${var_green()}">✅</div><div class="stat-label">Sudah Membayar</div></div><div class="stat-val">${sudahBayarCount}</div></div>
       <div class="stat-card"><div class="stat-top"><div class="stat-ic" style="background:${var_red()}">⏳</div><div class="stat-label">Belum Membayar</div></div><div class="stat-val">${belumBayarCount}</div></div>
-      <div class="stat-card"><div class="stat-top"><div class="stat-ic" style="background:${var_gold()}">💰</div><div class="stat-label">Total Uang Masuk</div></div><div class="stat-val" style="font-size:15px;">Rp${totalUangMasuk().toLocaleString('id-ID')}</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-ic" style="background:${var_gold()}">🪙</div><div class="stat-label">Iuran Masuk</div></div><div class="stat-val" style="font-size:15px;">Rp${totalIuranMasuk().toLocaleString('id-ID')}</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-ic" style="background:${var_gold()}">💰</div><div class="stat-label">Total Pemasukan</div></div><div class="stat-val" style="font-size:15px;">Rp${totalUangMasuk().toLocaleString('id-ID')}</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-ic" style="background:${var_red()}">💸</div><div class="stat-label">Pengeluaran Disetujui</div></div><div class="stat-val" style="font-size:15px;">Rp${totalPengeluaranDisetujui().toLocaleString('id-ID')}</div></div>
+      <div class="stat-card" style="grid-column:span 2;"><div class="stat-top"><div class="stat-ic" style="background:${var_blue()}">🏦</div><div class="stat-label">Saldo Kas Saat Ini</div></div><div class="stat-val">Rp${saldoKas().toLocaleString('id-ID')}</div></div>
     </div>
+    <div class="hint-box">Pembayaran jadwal iuran yang diterima melalui menu <b>Kelola Iuran</b> otomatis masuk ke Saldo Kas. Gunakan Catat Setoran di halaman ini hanya untuk setoran/pemasukan di luar jadwal iuran agar tidak tercatat dua kali.</div>
     <div class="search-bar" style="margin-top:14px;"><input id="keu-search" placeholder="Cari peserta…" oninput="renderKeuanganList()"></div>
     <div class="section-title" style="margin-top:14px;">Daftar Peserta</div>
     <div class="card" id="keu-list"></div>
@@ -7521,8 +7694,9 @@ function renderKeuanganList(){
   const list = DB.anggota.filter(a=>a.status==='Aktif' && a.nama.toLowerCase().includes(q));
   document.getElementById('keu-list').innerHTML = list.map(a=>{
     const rekap = setoranByAnggota(a.id);
-    const total = rekap.reduce((s,r)=>s+(Number(r.jumlah)||0),0);
-    const sudah = rekap.length>0;
+    const rekapIuran = (DB.iuranBayar||[]).filter(r=>r.anggotaId===a.id && !r.deleted_at);
+    const total = [...rekap,...rekapIuran].reduce((s,r)=>s+(Number(r.jumlah)||0),0);
+    const sudah = rekap.length>0 || rekapIuran.length>0;
     return `
     <div class="admin-row">
       ${avatarHtml(a, 38)}
@@ -7536,15 +7710,17 @@ function renderKeuanganList(){
   }).join('') || '<div class="empty-state">Tidak ada peserta ditemukan.</div>';
 }
 function renderKeuanganRiwayat(){
-  const list = [...(DB.setoran||[])].sort((x,y)=>new Date(y.tanggal)-new Date(x.tanggal));
-  document.getElementById('keu-riwayat').innerHTML = list.filter(r=>!r.deleted_at && masihDalamRiwayatMingguan(r.waktu || r.tanggal)).map(r=>`
+  const setoran=(DB.setoran||[]).filter(r=>!r.deleted_at).map(r=>({...r,_jenis:'Setoran',_tanggal:r.tanggal||r.waktu}));
+  const iuran=(DB.iuranBayar||[]).filter(r=>!r.deleted_at).map(r=>({...r,_jenis:'Iuran',_tanggal:r.tanggalBayar||r.waktu,_keterangan:(DB.iuranJadwal||[]).find(j=>j.id===r.jadwalId)?.namaKegiatan||r.namaKegiatan||'Pembayaran iuran'}));
+  const list=[...setoran,...iuran].sort((a,b)=>new Date(b.waktu||b._tanggal||0)-new Date(a.waktu||a._tanggal||0));
+  document.getElementById('keu-riwayat').innerHTML = list.map(r=>`
     <div class="admin-row">
       <div class="grow">
-        <div class="name">${esc(r.namaLengkap)}</div>
-        <div class="meta">Rp${(Number(r.jumlah)||0).toLocaleString('id-ID')} · ${fmtDate(r.tanggal)}${r.keterangan?(' · '+esc(r.keterangan)):''}</div>
+        <div class="name">${esc(r.namaLengkap||r.nama||'-')} <span class="chip chip-active">${r._jenis}</span></div>
+        <div class="meta">Rp${(Number(r.jumlah)||0).toLocaleString('id-ID')} · ${fmtDate(r._tanggal)}${(r.keterangan||r._keterangan)?(' · '+esc(r.keterangan||r._keterangan)):''}</div>
       </div>
-      <button class="tiny-btn" onclick="softDeleteKeuangan('setoran','${r.id}')">🗑</button>
-    </div>`).join('') || '<div class="empty-state">Belum ada riwayat setoran.</div>';
+      ${r._jenis==='Setoran'?`<button class="tiny-btn" onclick="softDeleteKeuangan('setoran','${r.id}')">🗑</button>`:''}
+    </div>`).join('') || '<div class="empty-state">Belum ada pemasukan.</div>';
 }
 function openCatatSetoranModal(anggotaId){
   if(!isBendaharaJabatan()){ toast('Hanya Bendahara yang bisa mencatat setoran.'); return; }
@@ -7575,12 +7751,9 @@ function openCatatSetoranModal(anggotaId){
 
 /* ---------------- BENDAHARA: Pengeluaran (butuh persetujuan Admin) ---------------- */
 async function autoHapusPengeluaranDisetujuiBulanan(){
-  const batas=Date.now()-30*24*60*60*1000;
-  const arr=DB.pengeluaran||[];
-  const lama=arr.filter(p=>p.status==='Disetujui'&&!p.deleted_at&&new Date(p.tanggalPersetujuan||p.tanggalPengajuan||0).getTime()<batas);
-  if(!lama.length) return;
-  DB.pengeluaran=arr.filter(p=>!lama.includes(p));
-  try{ await save('pengeluaran'); }catch(e){}
+  // Riwayat pengeluaran tidak boleh dihapus otomatis: transaksi lama tetap
+  // menjadi dasar saldo kas dan harus dapat diaudit Bendahara/Admin.
+  return;
 }
 
 function renderPengeluaranBendahara(){
@@ -7590,7 +7763,8 @@ function renderPengeluaranBendahara(){
   const mine = (DB.pengeluaran||[]).filter(p=>p.pengajuUsername===session.username && !p.deleted_at).sort((x,y)=>new Date(y.tanggalPengajuan)-new Date(x.tanggalPengajuan));
   document.getElementById('content').innerHTML = `
     <div class="stat-grid">
-      <div class="stat-card"><div class="stat-top"><div class="stat-ic" style="background:${var_gold()}">💰</div><div class="stat-label">Uang Masuk</div></div><div class="stat-val" style="font-size:15px;">Rp${totalUangMasuk().toLocaleString('id-ID')}</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-ic" style="background:${var_gold()}">🪙</div><div class="stat-label">Iuran Masuk</div></div><div class="stat-val" style="font-size:15px;">Rp${totalIuranMasuk().toLocaleString('id-ID')}</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-ic" style="background:${var_gold()}">💰</div><div class="stat-label">Total Pemasukan</div></div><div class="stat-val" style="font-size:15px;">Rp${totalUangMasuk().toLocaleString('id-ID')}</div></div>
       <div class="stat-card"><div class="stat-top"><div class="stat-ic" style="background:${var_red()}">💸</div><div class="stat-label">Pengeluaran Disetujui</div></div><div class="stat-val" style="font-size:15px;">Rp${totalPengeluaranDisetujui().toLocaleString('id-ID')}</div></div>
       <div class="stat-card" style="grid-column:span 2;"><div class="stat-top"><div class="stat-ic" style="background:${var_blue()}">🏦</div><div class="stat-label">Saldo Kas</div></div><div class="stat-val">Rp${saldoKas().toLocaleString('id-ID')}</div></div>
     </div>
@@ -7641,15 +7815,8 @@ function renderAdminPersetujuanPengeluaran(){
   autoResetKeuanganMingguan();
   if(!isAdminSystem()){ document.getElementById('content').innerHTML = '<div class="empty-state">Hanya Administrator yang bisa menyetujui/menolak pengeluaran.</div>'; return; }
   const menunggu = (DB.pengeluaran||[]).filter(p=>p.status==='Menunggu').sort((x,y)=>new Date(x.tanggalPengajuan)-new Date(y.tanggalPengajuan));
-  const batas = Date.now() - (7 * 24 * 60 * 60 * 1000);
-  const semuaLain = (DB.pengeluaran||[]).filter(p=>{
-    if(p.deleted_at) return false;
-    if(p.status==='Disetujui'){
-      const t=new Date(p.tanggalPersetujuan || p.tanggalPengajuan || 0).getTime();
-      if(Number.isFinite(t) && t>0 && t<batas) return false;
-    }
-    return p.status!=='Menunggu';
-  }).sort((x,y)=>new Date(y.tanggalPersetujuan||y.tanggalPengajuan)-new Date(x.tanggalPersetujuan||x.tanggalPengajuan));
+  const semuaLain = (DB.pengeluaran||[]).filter(p=>!p.deleted_at && p.status!=='Menunggu')
+    .sort((x,y)=>new Date(y.tanggalPersetujuan||y.tanggalPengajuan)-new Date(x.tanggalPersetujuan||x.tanggalPengajuan));
   const resmi = semuaLain.filter(p=>p.status==='Disetujui');
   document.getElementById('content').innerHTML = `
     <div class="stat-grid">
