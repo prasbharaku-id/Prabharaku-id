@@ -1560,12 +1560,20 @@ async function prosesKenaikanKelasTahunan(){
 
 async function loadAll(){
   const blobKeys = ['anggota','berita','galeri','jadwal','chat','settings','absensi','absensiSesi','absensiSampah','surat','pengajuan','galeriAnggota','voicemail','walkieChannels','walkiePermintaan','medsos','setoran','pengeluaran','iuranJadwal','iuranBayar','pembinaData'];
-  for(const k of blobKeys){
-    try{ DB[k] = await window.FB.appDataGet(k); }
-    catch(e){ DB[k] = null; }
-  }
-  try{ DB.users = await window.FB.usersSelectAll(); }
-  catch(e){ DB.users = null; }
+  // Ambil data secara paralel agar layar login tidak menunggu 21
+  // permintaan Supabase berjalan satu per satu. Setiap kunci tetap
+  // ditangani sendiri; kegagalan satu data tidak menggagalkan data lain.
+  const hasilPemuatan = await Promise.all([
+    ...blobKeys.map(async k => {
+      try { return [k, await window.FB.appDataGet(k)]; }
+      catch(e) { console.warn('Data belum berhasil dimuat:', k, e); return [k, null]; }
+    }),
+    (async () => {
+      try { return ['users', await window.FB.usersSelectAll()]; }
+      catch(e) { console.warn('Data users belum berhasil dimuat:', e); return ['users', null]; }
+    })()
+  ]);
+  for(const [k, nilai] of hasilPemuatan) DB[k] = nilai;
   let needsSeed = false;
   let usersJustSeeded = false;
   // PENTING — anti akun/profil hilang:
