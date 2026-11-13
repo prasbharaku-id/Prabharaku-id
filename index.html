@@ -1096,8 +1096,14 @@ table{max-width:100%;}
   function rowToUser(r){
     return {
       uid: r.uid, username: r.username, role: r.role, nama: r.nama,
-      nip: r.nip, joined: r.joined, anggotaId: r.anggota_id, foto: r.foto,
-      authEmail: r.email, angkatan: r.angkatan, krida: r.krida, jabatan: r.jabatan
+      nip: r.nip, joined: r.joined, anggotaId: r.anggota_id,
+      foto: r.foto || r.foto_profil || null, fotoProfil: r.foto_profil || null,
+      authEmail: r.email, angkatan: r.angkatan, krida: r.krida, jabatan: r.jabatan,
+      jabatanTambahan: r.jabatan_tambahan || null,
+      jenisKelamin: r.jenis_kelamin || null, telepon: r.telepon || null,
+      alamat: r.alamat || null, agama: r.agama || null,
+      statusAktif: r.status_aktif, masaBerlaku: r.masa_berlaku || null,
+      nomorSk: r.nomor_sk || null, tandaTangan: r.tanda_tangan || null
     };
   }
   function userToRow(u){
@@ -1646,6 +1652,58 @@ async function loadAll(){
   catch(e){ console.error('Kenaikan kelas tahunan belum berhasil disimpan:',e); }
   if(usersJustSeeded){ await ensureSeedAuthAccounts(); }
   if(needsSeed){ await saveAllSeeded(); }
+  // Pulihkan daftar anggota dari sumber akun yang sudah ada.
+  // Tabel app_data.anggota hanya berisi profil rinci; tabel users berisi
+  // akun anggota. Gabungkan berdasarkan anggota_id agar akun yang sudah
+  // ada tetap tampil tanpa membuat akun/auth baru atau mengubah tabel lain.
+  mergeUserAccountsIntoAnggota();
+}
+function mergeUserAccountsIntoAnggota(){
+  const profiles = Array.isArray(DB.anggota) ? DB.anggota : [];
+  const users = Array.isArray(DB.users) ? DB.users : [];
+  const byId = new Map();
+  profiles.forEach(a=>{
+    if(a && a.id != null && String(a.id).trim()) byId.set(String(a.id), a);
+  });
+  users.forEach(u=>{
+    if(!u || String(u.role||'').toLowerCase()!=='anggota') return;
+    const id = String(u.anggotaId||'').trim();
+    if(!id) return;
+    const fallback = {
+      id,
+      nama: u.nama || u.username || 'Anggota',
+      gender: u.jenisKelamin || '',
+      jenisKelamin: u.jenisKelamin || '',
+      foto: u.foto || u.fotoProfil || null,
+      fotoProfil: u.fotoProfil || null,
+      angkatan: u.angkatan != null ? u.angkatan : null,
+      krida: u.krida || '',
+      jabatan: u.jabatan || 'Anggota',
+      jabatanTambahan: u.jabatanTambahan || '',
+      joined: u.joined || null,
+      status: u.statusAktif === false ? 'Nonaktif' : 'Aktif',
+      alamat: u.alamat || '',
+      telepon: u.telepon || '',
+      agama: u.agama || '',
+      masaBerlaku: u.masaBerlaku || null,
+      nomorSk: u.nomorSk || '',
+      tandaTangan: u.tandaTangan || null,
+      kategori: 'Anggota'
+    };
+    const existing = byId.get(id);
+    if(existing){
+      // Data profil rinci dari app_data tetap menjadi prioritas.
+      Object.assign(existing, Object.fromEntries(
+        Object.entries(fallback).filter(([key,value]) =>
+          existing[key] === undefined || existing[key] === null || existing[key] === ''
+        )
+      ));
+    }else{
+      profiles.push(fallback);
+      byId.set(id, fallback);
+    }
+  });
+  DB.anggota = profiles;
 }
 async function touchPresence(){
   if(!session) return;
@@ -1862,7 +1920,16 @@ async function doLogin(){
       await window.FB.signOut(); return;
     }
   }
-  const linkedAnggota = workingUser.anggotaId ? DB.anggota.find(x=>x.id===workingUser.anggotaId) : null;
+  // Setelah login, coba muat ulang seluruh profil dengan sesi terautentikasi.
+  // Pembacaan sebelum login bisa dibatasi RLS sehingga daftar akun tidak lengkap.
+  // Jika kebijakan hanya mengizinkan profil sendiri, login tetap berjalan normal
+  // dan cache yang ada tetap dipakai; kegagalan ini tidak memblokir pengguna.
+  try{
+    const latestUsers = await window.FB.usersSelectAll();
+    if(Array.isArray(latestUsers)) DB.users = latestUsers;
+  }catch(e){ console.warn('Daftar akun lengkap belum dapat dimuat setelah login:', e); }
+  mergeUserAccountsIntoAnggota();
+  const linkedAnggota = workingUser.anggotaId ? DB.anggota.find(x=>String(x.id)===String(workingUser.anggotaId)) : null;
   if(linkedAnggota && linkedAnggota.status==='Nonaktif'){ err.textContent='Akun Anda telah dinonaktifkan. Hubungi Pembina.'; err.style.display='block'; await window.FB.signOut(); return; }
   const pengajuanSaya = DB.pengajuan.find(p=>p.username===workingUser.username);
   if(pengajuanSaya && pengajuanSaya.status==='Menunggu'){ err.textContent='Akun Anda masih menunggu persetujuan admin untuk bergabung.'; err.style.display='block'; await window.FB.signOut(); return; }
