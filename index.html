@@ -1665,18 +1665,46 @@ function mergeUserAccountsIntoAnggota(){
   profiles.forEach(a=>{
     if(a && a.id != null && String(a.id).trim()) byId.set(String(a.id), a);
   });
+
+  // Sumber pemulihan nama/angkatan: sesi absensi yang diminta pengguna.
+  // Absensi hanya DIBACA; tidak ada perubahan pada DB.absensi atau DB.absensiSesi.
+  const targetDate = '2026-09-18';
+  const targetTitle = 'pertemuan rutin persiapan kkp';
+  const sessions = Array.isArray(DB.absensiSesi) ? DB.absensiSesi : [];
+  const targetSessionIds = new Set(sessions.filter(s=>{
+    const date = String(s?.tanggal || '').slice(0,10);
+    const title = String(s?.keterangan || '').trim().toLowerCase();
+    return date === targetDate && title.includes(targetTitle);
+  }).map(s=>String(s.id)));
+  const attendance = (Array.isArray(DB.absensi) ? DB.absensi : []).filter(r=>
+    targetSessionIds.has(String(r?.sesiId)) &&
+    r?.approval !== 'Menunggu Persetujuan'
+  );
+  const attendanceById = new Map();
+  attendance.forEach(r=>{
+    const id = String(r?.anggotaId || '').trim();
+    if(!id) return;
+    const prev = attendanceById.get(id) || [];
+    prev.push(r);
+    attendanceById.set(id, prev);
+  });
+
+  let changed = false;
   users.forEach(u=>{
     if(!u || String(u.role||'').toLowerCase()!=='anggota') return;
     const id = String(u.anggotaId||'').trim();
     if(!id) return;
+    const rows = attendanceById.get(id) || [];
+    const attendanceName = rows.find(r=>String(r.nama||'').trim())?.nama || '';
+    const attendanceAngkatan = rows.find(r=>r.angkatan!==null && r.angkatan!==undefined && String(r.angkatan).trim()!=='')?.angkatan;
     const fallback = {
       id,
-      nama: u.nama || u.username || 'Anggota',
+      nama: u.nama || attendanceName || u.username || 'Anggota',
       gender: u.jenisKelamin || '',
       jenisKelamin: u.jenisKelamin || '',
       foto: u.foto || u.fotoProfil || null,
       fotoProfil: u.fotoProfil || null,
-      angkatan: u.angkatan != null ? u.angkatan : null,
+      angkatan: (u.angkatan!==null && u.angkatan!==undefined && String(u.angkatan).trim()!=='') ? u.angkatan : (attendanceAngkatan ?? null),
       krida: u.krida || '',
       jabatan: u.jabatan || 'Anggota',
       jabatanTambahan: u.jabatanTambahan || '',
@@ -1692,18 +1720,23 @@ function mergeUserAccountsIntoAnggota(){
     };
     const existing = byId.get(id);
     if(existing){
-      // Data profil rinci dari app_data tetap menjadi prioritas.
-      Object.assign(existing, Object.fromEntries(
-        Object.entries(fallback).filter(([key,value]) =>
-          existing[key] === undefined || existing[key] === null || existing[key] === ''
-        )
-      ));
+      // Hanya isi kolom yang benar-benar kosong; data profil yang sudah ada tetap utuh.
+      Object.entries(fallback).forEach(([key,value])=>{
+        if(existing[key]===undefined || existing[key]===null || existing[key]===''){
+          if(value!==undefined && value!==null && value!==''){
+            existing[key]=value;
+            changed=true;
+          }
+        }
+      });
     }else{
       profiles.push(fallback);
       byId.set(id, fallback);
+      changed=true;
     }
   });
   DB.anggota = profiles;
+  return changed;
 }
 async function touchPresence(){
   if(!session) return;
@@ -1735,7 +1768,9 @@ async function saveAllSeeded(){
   // "users" TIDAK disimpan lewat jalur generik ini — akun contoh sudah
   // disimpan satu per satu lewat ensureSeedAuthAccounts()/bootstrap_user_profile,
   // sesuai kebijakan keamanan tabel users (lihat supabase_setup.sql).
-  for(const k of ['anggota','berita','galeri','jadwal','chat','settings','absensi','absensiSesi','absensiSampah','surat','pengajuan','galeriAnggota','voicemail','walkieChannels','walkiePermintaan','medsos','setoran','pengeluaran','iuranJadwal','iuranBayar','pembinaData']) await save(k);
+  // Data absensi dan keuangan tidak pernah ikut ditulis ulang saat proses seed.
+  // Ini mencegah array kosong akibat pembacaan sementara/RLS menimpa data yang sudah ada.
+  for(const k of ['anggota','berita','galeri','jadwal','chat','settings','surat','pengajuan','galeriAnggota','voicemail','walkieChannels','walkiePermintaan','medsos','pembinaData']) await save(k);
 }
 var _absenSavePending = 0, _absenSaveVersion = 0;
 async function save(key){
@@ -1928,8 +1963,23 @@ async function doLogin(){
     const latestUsers = await window.FB.usersSelectAll();
     if(Array.isArray(latestUsers)) DB.users = latestUsers;
   }catch(e){ console.warn('Daftar akun lengkap belum dapat dimuat setelah login:', e); }
-  mergeUserAccountsIntoAnggota();
+  const profilBerubah = mergeUserAccountsIntoAnggota();
   const linkedAnggota = workingUser.anggotaId ? DB.anggota.find(x=>String(x.id)===String(workingUser.anggotaId)) : null;
+  // Gunakan profil yang berhasil dipulihkan untuk melengkapi sesi login yang kolomnya NULL.
+  if(linkedAnggota){
+    if(!workingUser.nama) workingUser.nama = linkedAnggota.nama || workingUser.username || 'Anggota';
+    if(workingUser.angkatan==null || String(workingUser.angkatan).trim()==='') workingUser.angkatan = linkedAnggota.angkatan ?? null;
+    if(!workingUser.krida) workingUser.krida = linkedAnggota.krida || '';
+    if(!workingUser.jabatan) workingUser.jabatan = linkedAnggota.jabatan || 'Anggota';
+  }else if(!workingUser.nama){
+    workingUser.nama = workingUser.username || 'Anggota';
+  }
+  // Hanya Admin yang menyimpan hasil gabungan profil ke app_data.anggota.
+  // Tidak menyentuh users, absensi, maupun data iuran.
+  if(profilBerubah && String(workingUser.role||'').toLowerCase()==='admin'){
+    try{ await save('anggota'); }
+    catch(e){ console.warn('Pemulihan profil belum tersimpan:',e); }
+  }
   if(linkedAnggota && linkedAnggota.status==='Nonaktif'){ err.textContent='Akun Anda telah dinonaktifkan. Hubungi Pembina.'; err.style.display='block'; await window.FB.signOut(); return; }
   const pengajuanSaya = DB.pengajuan.find(p=>p.username===workingUser.username);
   if(pengajuanSaya && pengajuanSaya.status==='Menunggu'){ err.textContent='Akun Anda masih menunggu persetujuan admin untuk bergabung.'; err.style.display='block'; await window.FB.signOut(); return; }
