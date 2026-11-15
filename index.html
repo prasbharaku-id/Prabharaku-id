@@ -1058,6 +1058,23 @@ table{max-width:100%;}
     const { error } = await client.auth.resetPasswordForEmail(email, { redirectTo: window.location.href.split('#')[0] });
     if(error) throw error;
   }
+  // Reset sandi anggota dilakukan melalui Edge Function yang memverifikasi
+  // token sesi dan role Admin di server. Service-role key tidak pernah ada di HTML.
+  async function adminResetMemberPassword(targetUid, newPassword){
+    const { data, error } = await client.functions.invoke('admin-reset-member-password', {
+      body: { target_uid: targetUid, new_password: newPassword }
+    });
+    if(error){
+      let detail = error.message || 'Permintaan reset sandi gagal.';
+      try{
+        const payload = error.context && typeof error.context.json === 'function' ? await error.context.json() : null;
+        if(payload && payload.error) detail = payload.error;
+      }catch(e){}
+      throw new Error(detail);
+    }
+    if(!data || data.success !== true) throw new Error(data?.error || 'Reset sandi gagal.');
+    return data;
+  }
   // Akun kedua dibuat lewat secondaryClient supaya sesi admin tidak terganggu.
   // Mengembalikan uid akun baru agar profilnya bisa langsung disimpan.
   async function adminCreateAccount(email, password){
@@ -1186,7 +1203,7 @@ table{max-width:100%;}
   window.FB = {
     signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut,
     getCurrentUidAsync, reauthenticate, updatePassword, updateEmail,
-    sendPasswordResetEmail, adminCreateAccount,
+    sendPasswordResetEmail, adminCreateAccount, adminResetMemberPassword,
     usersSelectAll, usersSelectOne, usersUpdateUidOnly, usersUpsertAll, usersDelete, bootstrapUserProfile,
     appDataGet, appDataSet, subscribeAppData, onPasswordRecovery,
     uploadToStorage, deleteFromStorage, openBroadcastChannel,
@@ -2883,7 +2900,11 @@ function renderEkta(){
   const a = myEktaEntity();
   document.getElementById('content').innerHTML = `${pendingBanner()}<div id="ekta-holder"></div>`;
   if(a){
-    document.getElementById('ekta-holder').innerHTML = ektaDigitalHtml(a) + '<div class="ekta-hint">Ketuk kartu untuk melihat e-KTA dalam ukuran penuh. Pilih halaman depan atau belakang.</div>';
+    const statusInfo = ektaStatusInfo(a);
+    const statusNote = ektaHasBeenIssued(a)
+      ? `<div class="ekta-hint" style="margin-top:10px;">${ektaStatusChipHtml(a, true)}</div>`
+      : `<div class="card" style="margin-top:12px;text-align:center;padding:14px;"><div style="font-weight:800;font-size:12px;">⏳ e-KTA BELUM DITERBITKAN</div><div style="font-size:11px;color:var(--muted);margin-top:5px;line-height:1.5;">Kartu digital sudah tersedia sebagai pratinjau. Nomor KTA dan QR akan aktif setelah Admin/Pembina menerbitkannya.</div>${ektaStatusChipHtml(a, true)}</div>`;
+    document.getElementById('ekta-holder').innerHTML = ektaDigitalHtml(a) + statusNote + '<div class="ekta-hint">Ketuk kartu untuk melihat e-KTA dalam ukuran penuh. Pilih halaman depan atau belakang.</div>';
     renderEktaQr('ektaqr-'+a.id, ektaHasBeenIssued(a) ? memberCode(a) : null);
     ektaFitAll();
   } else {
@@ -2914,7 +2935,7 @@ function switchEktaDigitalSide(id, side){
 }
 function filterEktaSearch(){
   const q=(document.getElementById('ekta-search')?.value||'').toLowerCase();
-  const list = DB.anggota.filter(a=>a.status==='Aktif' && a.nama.toLowerCase().includes(q)).slice(0,8);
+  const list = DB.anggota.filter(a=>a.nama.toLowerCase().includes(q) && (a.status==='Aktif' || a.jabatan==='Calon Anggota' || a.status==='Calon Anggota' || a.status==='Menunggu Persetujuan')).slice(0,8);
   document.getElementById('ekta-search-list').innerHTML = list.map(a=>ektaCardHtml(a)).join('') || '<div class="empty-state">Tidak ditemukan.</div>';
   list.forEach(a=>renderEktaQr('ektaqr-'+a.id, ektaHasBeenIssued(a) ? memberCode(a) : null));
   ektaFitAll();
@@ -3019,12 +3040,12 @@ window.addEventListener('resize', ()=>{ ektaFitAll(); fitEktaFullscreen(); });
 
 /* ---------------- Cetak e-KTA: Unduh PDF / Simpan sebagai Gambar ---------------- */
 function ektaMasaBerlaku(a){
+  // Masa berlaku baru ditampilkan setelah Admin/Pembina benar-benar menerbitkan e-KTA.
+  // Sebelum diterbitkan, jangan tampilkan tanggal perkiraan atau tanggal lama.
+  if(!ektaHasBeenIssued(a) || !a.ektaTglMulai) return 'BELUM DITERBITKAN';
   if(a.ektaTglBerakhir) return fmtDate(a.ektaTglBerakhir);
   if(a.masaBerlaku) return fmtDate(a.masaBerlaku);
-  if(!a.joined) return '-';
-  const d = new Date(a.joined); if(isNaN(d)) return '-';
-  d.setFullYear(d.getFullYear()+3);
-  return fmtDate(d);
+  return '-';
 }
 function ektaPrintFrontHtml(a){
   return `<div class="ekta-ref-card ekta-ref-front ekta-ref-print" id="ekta-print-front-${a.id}" style="--ekta-front-bg:url(${EKTA_FRONT_BG_DATA_URL});">
@@ -3358,8 +3379,10 @@ function absenStatusBadge(status){
     'Izin':  {ic:'📝', bg:'#fff0e0', c:'#a15c00'},
     'Alpa':  {ic:'⚪', bg:'#f1f3f8', c:'#555b6e'},
   };
-  const s = map[status] || map['Hadir'];
-  return `<span class="role-pill" style="background:${s.bg};color:${s.c};">${s.ic} ${esc(status||'Hadir')}</span>`;
+  const key=String(status||'').trim();
+  const s = map[key];
+  if(!s) return '<span class="role-pill" style="background:#eef1f5;color:#626b78;">⏳ Belum diisi</span>';
+  return `<span class="role-pill" style="background:${s.bg};color:${s.c};">${s.ic} ${esc(key)}</span>`;
 }
 
 /* ---------------- QR e-KTA — semua akun ---------------- */
@@ -3400,9 +3423,9 @@ function renderQRScanner(){
 }
 /* ---------------- Absen Saya (anggota mengisi status kehadiran) ---------------- */
 function grafikAbsenSayaHtml(riwayat){
-  const total = riwayat.length;
   const counts = {Hadir:0, Izin:0, Sakit:0, Alpa:0};
-  riwayat.forEach(r=>{ const st=(r.status||'Alpa')==='Tidak Hadir'?'Alpa':(r.status||'Alpa'); if(counts[st]!==undefined) counts[st]++; });
+  riwayat.forEach(r=>{ const raw=String(r.status||'').trim(); if(!raw) return; const st=raw==='Tidak Hadir'?'Alpa':raw; if(counts[st]!==undefined) counts[st]++; });
+  const total = Object.values(counts).reduce((a,b)=>a+b,0);
   const pct = k => total ? Math.round((counts[k]/total)*100) : 0;
   const hadirPct=pct('Hadir'), izinPct=pct('Izin'), sakitPct=pct('Sakit'), alpaPct=pct('Alpa');
   let evaluasi='Belum ada data kehadiran.';
@@ -3470,7 +3493,7 @@ function renderAbsenSaya(){
         const kegiatan = sesi ? (esc(sesi.keterangan||'-')+' · ') : '';
         const ket = r.keterangan ? (esc(r.keterangan)+' · ') : '';
         const status = r.approval==='Menunggu Persetujuan' ? 'Menunggu Persetujuan' : (r.disetujuiOleh ? 'Disetujui oleh '+esc(r.disetujuiOleh) : '');
-        return `<div class="absen-row"><div class="grow"><div class="name">${fmtDate(r.tanggal)} · ${esc(r.status||'Hadir')}</div><div class="meta">${kegiatan}${ket}${status}</div></div></div>`;
+        return `<div class="absen-row"><div class="grow"><div class="name">${fmtDate(r.tanggal)} · ${esc(r.status||'Belum diisi')}</div><div class="meta">${kegiatan}${ket}${status}</div></div></div>`;
       }).join('') : '<div class="empty-state">Belum ada riwayat absensi.</div>'}
     </div>
   `;
@@ -3564,7 +3587,7 @@ function renderDaftarHadir(){
         <div class="name">${fmtDate(s.tanggal)} · ${esc(s.keterangan||'-')}</div>
         <div class="meta">${esc(s.mode==='manual'?'📝 Absen Manual':'📷 Absen Online')} · Mulai ${esc(s.jamMulai||'-')} · ${status}</div>
       </div>
-      ${canManageAbsensi()?`<button class="btn-danger" style="padding:7px 10px;border-radius:8px;font-size:11px;font-weight:800;" onclick="event.stopPropagation();hapusSesiAbsensi('${s.id}')">🗑️ HAPUS</button>`:''}
+      ${canManageAbsensi()?`<div style="display:flex;gap:5px;flex-wrap:wrap;"><button class="btn-outline" style="padding:7px 9px;border-radius:8px;font-size:10px;font-weight:800;" onclick="event.stopPropagation();openEditSesiAbsensi('${s.id}')">✏️ EDIT</button><button class="btn-outline" style="padding:7px 9px;border-radius:8px;font-size:10px;font-weight:800;" onclick="event.stopPropagation();openTambahAngkatanSesi('${s.id}')">＋ ANGKATAN</button><button class="btn-danger" style="padding:7px 9px;border-radius:8px;font-size:10px;font-weight:800;" onclick="event.stopPropagation();hapusSesiAbsensi('${s.id}')">🗑️</button></div>`:''}
     </div>`;
   }).join(''):'<div class="empty-state">Belum ada tanggal/kegiatan yang memiliki absensi.</div>';
 
@@ -3638,8 +3661,64 @@ function renderDaftarHadir(){
        </div>
      </div>
      ${selected?`<div class="section-title">${esc(selected.keterangan||'-')} — ${fmtDate(selected.tanggal)}</div>
+       ${canManageAbsensi()?`<div style="display:flex;gap:7px;margin:0 0 9px;"><button class="btn-outline" style="flex:1;" onclick="openEditSesiAbsensi('${selected.id}')">✏️ Edit Tanggal / Kegiatan</button><button class="btn-outline" style="flex:1;" onclick="openTambahAngkatanSesi('${selected.id}')">＋ Tambah Angkatan Terlewat</button></div>`:''}
        <div class="search-bar"><input id="dh-search" value="${esc(DaftarHadirState.search||'')}" placeholder="Cari nama atau angkatan…" oninput="filterDaftarHadirRows()"></div>
        <div id="daftar-hadir-results">${table}</div>${rekapAbsensiHtml(list)}<button class="btn-outline" style="width:100%;margin-top:4px;" onclick="kembaliDaftarHadir()">← Kembali</button>`:'<div class="empty-state">Pilih tanggal untuk melihat daftar hadir.</div>'}`;
+}
+function openEditSesiAbsensi(sesiId){
+  if(!canManageAbsensi()){ toast('Akses ditolak.'); return; }
+  const sesi=getSesiById(sesiId); if(!sesi) return;
+  openModal('Edit Tanggal & Kegiatan', `
+    <div class="field"><label>Nama Kegiatan</label><input id="edit-sesi-kegiatan" value="${esc(sesi.keterangan||'')}" maxlength="160"></div>
+    <div class="field"><label>Tanggal Kegiatan</label><input id="edit-sesi-tanggal" type="date" value="${esc(sesi.tanggal||'')}"></div>
+    <div style="font-size:10.5px;color:var(--muted);">Perubahan akan diterapkan pada sesi dan seluruh catatan absensi yang terhubung. Data status hadir/izin/sakit/alpa tidak dihapus.</div>
+  `, async()=>{
+    const kegiatan=(document.getElementById('edit-sesi-kegiatan')?.value||'').trim();
+    const tanggal=(document.getElementById('edit-sesi-tanggal')?.value||'').trim();
+    if(!kegiatan||!tanggal){ toast('Nama kegiatan dan tanggal wajib diisi.'); return; }
+    const oldDate=sesi.tanggal;
+    sesi.keterangan=kegiatan; sesi.tanggal=tanggal;
+    (DB.absensi||[]).filter(r=>String(r.sesiId)===String(sesi.id)).forEach(r=>{r.tanggal=tanggal;});
+    await save('absensiSesi'); await save('absensi');
+    closeModal(); toast('Nama kegiatan dan tanggal absensi berhasil diperbarui.');
+    if(DaftarHadirState.sesiTerpilih===sesi.id) renderDaftarHadir(); else renderAdminAbsen();
+  });
+}
+function openTambahAngkatanSesi(sesiId){
+  if(!canManageAbsensi()){ toast('Akses ditolak.'); return; }
+  const sesi=getSesiById(sesiId); if(!sesi){ toast('Sesi absensi tidak ditemukan.'); return; }
+  const used=new Set((DB.absensi||[]).filter(r=>String(r.sesiId)===String(sesi.id)).map(r=>String(r.anggotaId)));
+  const aktif=a=>a&&(a.status==null||String(a.status).toLowerCase()!=='nonaktif');
+  const options=daftarAngkatanManual().filter(n=>(DB.anggota||[]).some(a=>aktif(a)&&String(a.angkatan||'')===String(n)&&!used.has(String(a.id))));
+  if(!options.length){ toast('Tidak ada angkatan dengan anggota yang belum tercatat pada sesi ini.'); return; }
+  openModal('Tambah Angkatan yang Terlewat', `
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px;">Pilih angkatan seperti saat membuat absen manual. Seluruh anggota aktif dari angkatan yang dipilih akan ditambahkan sekaligus. Status kehadiran tidak diisi di sini.</div>
+    <div class="field"><label>Pilih Angkatan</label><select id="tambah-sesi-angkatan" onchange="updateRingkasanTambahAngkatanSesi('${sesi.id}')">${options.map(n=>`<option value="${esc(n)}">Angkatan ${esc(n)}</option>`).join('')}</select></div>
+    <div id="tambah-sesi-ringkasan" style="padding:11px;border:1px solid var(--line);border-radius:9px;background:var(--bg,#f4f6fa);font-size:12px;font-weight:700;margin-top:8px;"></div>
+    <div style="font-size:10.5px;color:var(--muted);margin-top:9px;">Semua anggota yang ditambahkan akan muncul di Kelola Absensi → Hasil Absen dengan status <b>Belum diisi</b>. Statusnya dapat ditentukan atau diedit dari daftar Hasil Absen.</div>
+  `, async()=>{
+    const angkatan=String(document.getElementById('tambah-sesi-angkatan')?.value||'');
+    if(!angkatan){ toast('Pilih angkatan terlebih dahulu.'); return; }
+    const currentUsed=new Set((DB.absensi||[]).filter(r=>String(r.sesiId)===String(sesi.id)).map(r=>String(r.anggotaId)));
+    const members=(DB.anggota||[]).filter(a=>aktif(a)&&String(a.angkatan||'')===angkatan&&!currentUsed.has(String(a.id)));
+    if(!members.length){ toast('Tidak ada anggota baru dari angkatan tersebut untuk ditambahkan.'); return; }
+    const staged=members.map(a=>({id:uid(),sesiId:sesi.id,anggotaId:a.id,nama:a.nama,angkatan:a.angkatan||null,jabatan:a.jabatan||'Anggota Biasa',tanggal:sesi.tanggal,waktu:sesi.jamMulai||localTimeStr(),status:'',keterangan:'',approval:'Disetujui',oleh:session.nama||session.username,disetujuiOleh:null,waktuPersetujuan:null,diubahOleh:null,waktuUbah:null}));
+    DB.absensi.push(...staged);
+    sesi.angkatanTarget=Array.isArray(sesi.angkatanTarget)?[...new Set([...sesi.angkatanTarget.map(String),angkatan])]:[angkatan];
+    await save('absensiSesi'); await save('absensi');
+    closeModal(); toast('Seluruh '+staged.length+' anggota Angkatan '+angkatan+' berhasil ditambahkan. Status kehadiran masih belum diisi.');
+    DaftarHadirState.sesiTerpilih=sesi.id;
+    renderDaftarHadir();
+  });
+  setTimeout(()=>updateRingkasanTambahAngkatanSesi(sesi.id),0);
+}
+function updateRingkasanTambahAngkatanSesi(sesiId){
+  const sesi=getSesiById(sesiId); if(!sesi)return;
+  const angkatan=String(document.getElementById('tambah-sesi-angkatan')?.value||'');
+  const used=new Set((DB.absensi||[]).filter(r=>String(r.sesiId)===String(sesi.id)).map(r=>String(r.anggotaId)));
+  const count=(DB.anggota||[]).filter(a=>a&&(a.status==null||String(a.status).toLowerCase()!=='nonaktif')&&String(a.angkatan||'')===angkatan&&!used.has(String(a.id))).length;
+  const el=document.getElementById('tambah-sesi-ringkasan');
+  if(el) el.innerHTML=`Seluruh anggota aktif Angkatan ${esc(angkatan||'-')} yang belum tercatat pada sesi ini akan ditambahkan: <b>${count} anggota</b>.`;
 }
 function toggleDaftarTanggalKegiatan(){
   const box=document.getElementById('dh-all'), icon=document.getElementById('dh-toggle-icon');
@@ -4134,6 +4213,7 @@ function openUbahStatusAbsen(id){
     <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px;">Gunakan ini jika ada anggota yang sebenarnya hadir/izin/sakit tetapi statusnya belum sesuai (misalnya tercatat Alpa karena lupa mengisi absen).</div>
     <div class="field"><label>Status</label>
       <select id="ubah-status">
+        <option value="" ${!r.status?'selected':''}>Pilih status kehadiran</option>
         <option value="Hadir" ${r.status==='Hadir'?'selected':''}>✅ Hadir</option>
         <option value="Izin" ${r.status==='Izin'?'selected':''}>📝 Izin</option>
         <option value="Sakit" ${r.status==='Sakit'?'selected':''}>🩺 Sakit</option>
@@ -4148,6 +4228,7 @@ async function simpanUbahStatusAbsen(id){
   if(!r) return;
   const statusBaru = document.getElementById('ubah-status').value;
   const keteranganBaru = document.getElementById('ubah-keterangan').value.trim();
+  if(!statusBaru){ toast('Pilih status kehadiran terlebih dahulu.'); return; }
   r.status = statusBaru;
   r.keterangan = keteranganBaru;
   r.approval = 'Disetujui';
@@ -4599,7 +4680,7 @@ function exportAbsensiCSV(sesiId){
   list.forEach(r=>{
     const a = DB.anggota.find(x=>x.id===r.anggotaId);
     const sesi = getSesiById(r.sesiId);
-    rows.push([r.nama||(a?a.nama:'-'), String(r.angkatan||'-'), r.jabatan||'-', sesi?sesi.keterangan||'-':'-', r.tanggal, r.waktu||'-', r.status||'Hadir', r.keterangan||'-', r.disetujuiOleh||'-']);
+    rows.push([r.nama||(a?a.nama:'-'), String(r.angkatan||'-'), r.jabatan||'-', sesi?sesi.keterangan||'-':'-', r.tanggal, r.waktu||'-', r.status||'Belum diisi', r.keterangan||'-', r.disetujuiOleh||'-']);
   });
   const csv = rows.map(row=>row.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\r\n');
   const blob = new Blob(['\uFEFF'+csv], {type:'text/csv;charset=utf-8;'});
@@ -4648,7 +4729,7 @@ function renderUbahSandi(){
     <div class="card">
       <div class="section-title" style="margin-bottom:8px;font-size:13px;">🔒 Ubah Kata Sandi</div>
       <div id="pw-error" class="error-box"></div>
-      <div class="field"><label>Kata Sandi Saat Ini</label><input type="password" id="pw-current" placeholder="Masukkan kata sandi saat ini"></div>
+      <div style="font-size:10.5px;color:var(--muted);margin-bottom:9px;">Anda sudah login. Masukkan kata sandi baru tanpa perlu mengingat kata sandi lama.</div>
       <div class="field">
         <label>Kata Sandi Baru</label>
         <input type="password" id="pw-new" placeholder="Minimal 6 karakter" oninput="updatePwStrength()">
@@ -4701,7 +4782,6 @@ function updatePwStrength(){
   bar.style.background = colors[score];
 }
 async function doChangePassword(){
-  const cur = document.getElementById('pw-current').value;
   const nw = document.getElementById('pw-new').value;
   const cf = document.getElementById('pw-confirm').value;
   const err = document.getElementById('pw-error');
@@ -4709,13 +4789,11 @@ async function doChangePassword(){
   if(!nw || nw.length<6){ err.textContent='Kata sandi baru minimal 6 karakter.'; err.style.display='block'; return; }
   if(nw!==cf){ err.textContent='Konfirmasi kata sandi baru tidak sama.'; err.style.display='block'; return; }
   try{
-    await window.FB.reauthenticate(session.authEmail || usernameToEmail(session.username), cur);
     await window.FB.updatePassword(nw);
   }catch(e){
-    err.textContent='Kata sandi saat ini salah.'; err.style.display='block'; return;
+    err.textContent=e?.message||'Gagal memperbarui kata sandi. Silakan coba lagi.'; err.style.display='block'; return;
   }
   toast('Kata sandi berhasil diperbarui.');
-  document.getElementById('pw-current').value='';
   document.getElementById('pw-new').value='';
   document.getElementById('pw-confirm').value='';
   updatePwStrength();
@@ -6429,7 +6507,7 @@ function rekapAbsensiPerAngkatanHtml(anggotaList, bulanDipilih){
   const chart=[['Hadir',total.Hadir,'#21864b'],['Izin',total.Izin,'#d99a19'],['Sakit',total.Sakit,'#3975c6'],['Alpa / Tanpa Keterangan',total.Alpa,'#c74444']];
   const chartDetails=chart.map(([label,n,color])=>{
     const status=label==='Alpa / Tanpa Keterangan'?'Alpa':label;
-    const list=memberStats.filter(a=>status==='Alpa'?a._abs.Alpa>=3:a._abs[status]>0).sort((a,b)=>b._abs[status]-a._abs[status]||String(a.nama||'').localeCompare(String(b.nama||'')));
+    const list=memberStats.filter(a=>a._abs[status]>0).sort((a,b)=>b._abs[status]-a._abs[status]||String(a.nama||'').localeCompare(String(b.nama||'')));
     const rows=list.map(a=>{
       let note='';
       if(status==='Alpa') note=a._abs.Alpa>=3?'⚠️ Masuk peringatan (minimal 3 kali)':'Belum mencapai batas peringatan';
@@ -6438,7 +6516,7 @@ function rekapAbsensiPerAngkatanHtml(anggotaList, bulanDipilih){
       else note=rajinHadir.some(x=>String(x.id)===String(a.id))?'🏆 Rajin hadir':(masihAman.some(x=>String(x.id)===String(a.id))?'✅ Absensi masih aman':'Catatan kehadiran');
       return `<div style="padding:9px 0;border-top:1px solid var(--line);display:flex;justify-content:space-between;gap:8px;align-items:center;"><div><b style="font-size:11.5px;">${esc(a.nama||'-')}</b><div style="font-size:10px;color:var(--muted);">Angkatan ${esc(a.angkatan||'-')} · ${esc(note)}</div></div><b style="font-size:11px;color:${color};white-space:nowrap;">${a._abs[status]} kali</b></div>`;
     }).join('');
-    return `<div id="rekap-chart-detail-${status}" style="display:none;"><button type="button" onclick="kembaliGrafikAbsensi()" style="border:0;background:var(--bg);color:var(--blue);padding:8px 12px;border-radius:8px;font-weight:800;margin-bottom:9px;cursor:pointer;">← Kembali ke Grafik</button><div class="card" style="border-left:4px solid ${color};"><div style="font-size:12px;font-weight:900;">${label}</div><div style="font-size:10.5px;color:var(--muted);margin:4px 0 8px;">${status==='Alpa'?`${list.length} anggota dengan minimal 3 kali Alpa pada ${esc(monthLabel(selected))}`:`${n} catatan pada ${esc(monthLabel(selected))} · ${list.length} anggota`}</div>${rows||'<div class="empty-state">Belum ada anggota yang mencapai minimal 3 kali Alpa pada bulan ini.</div>'}</div></div>`;
+    return `<div id="rekap-chart-detail-${status}" style="display:none;"><button type="button" onclick="kembaliGrafikAbsensi()" style="border:0;background:var(--bg);color:var(--blue);padding:8px 12px;border-radius:8px;font-weight:800;margin-bottom:9px;cursor:pointer;">← Kembali ke Grafik</button><div class="card" style="border-left:4px solid ${color};"><div style="font-size:12px;font-weight:900;">${label}</div><div style="font-size:10.5px;color:var(--muted);margin:4px 0 8px;">${n} catatan pada ${esc(monthLabel(selected))} · ${list.length} anggota dengan status ${esc(statusLabelForRekap(status))}</div>${rows||'<div class="empty-state">Belum ada anggota dengan catatan status ini pada bulan yang dipilih.</div>'}</div></div>`;
   }).join('');
   const chartHtml=`<div id="rekap-chart-view" class="card" style="margin-bottom:10px;"><div style="font-size:12px;font-weight:900;margin-bottom:10px;">📈 GRAFIK STATUS ABSENSI</div>${chart.map(([label,n,color])=>`<button type="button" onclick="bukaDetailGrafikAbsensi('${label==='Alpa / Tanpa Keterangan'?'Alpa':label}')" style="display:block;width:100%;text-align:left;margin:9px 0;padding:8px;border:0;border-radius:9px;background:var(--bg);color:var(--text);cursor:pointer;"><div style="display:flex;justify-content:space-between;gap:8px;font-size:10.5px;margin-bottom:5px;"><b>${label}</b><b>${n} (${chartTotal?Math.round(n/chartTotal*100):0}%)</b></div><div style="height:11px;border-radius:99px;background:var(--line);overflow:hidden;"><div style="height:100%;width:${chartTotal?n/chartTotal*100:0}%;background:${color};border-radius:99px;"></div></div><div style="font-size:9px;color:var(--muted);margin-top:4px;">Ketuk untuk melihat daftar anggota</div></button>`).join('')}<div style="font-size:10px;color:var(--muted);margin-top:8px;">Grafik berdasarkan catatan absensi pada bulan yang dipilih.</div></div><div id="rekap-chart-details">${chartDetails}</div>`;
   const statusLists=statusCard('Alpa / Tanpa Keterangan','Peringatan diberikan jika Alpa atau tanpa keterangan sudah mencapai minimal 3 kali dalam bulan yang dipilih.',noKeterangan,'#c74444','⚠️',a=>a._abs.Alpa+' kali')+
@@ -6486,7 +6564,7 @@ function rekapAbsensiPerAngkatanHtml(anggotaList, bulanDipilih){
     },{Hadir:0,Izin:0,Sakit:0,Alpa:0});
     return `<details class="card" style="padding:0;overflow:hidden;margin-bottom:9px;" ${keys.length===1?'open':''}>
       <summary style="list-style:none;cursor:pointer;padding:12px;display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--bg,#f4f6fa);">
-        <span style="font-size:12px;font-weight:900;">🏷️ ${key==='Belum Diisi'?key:'Angkatan '+esc(key)} <small style="display:block;font-size:10px;color:var(--muted);font-weight:600;margin-top:3px;">${list.length} anggota · Hadir ${subtotal.Hadir} · Alpa ${subtotal.Alpa}</small></span>
+        <span style="font-size:12px;font-weight:900;">🏷️ ${key==='Belum Diisi'?key:'Angkatan '+esc(key)} <small style="display:block;font-size:10px;color:var(--muted);font-weight:600;margin-top:3px;">${list.length} anggota · Hadir ${subtotal.Hadir} · Izin ${subtotal.Izin} · Sakit ${subtotal.Sakit} · Alpa ${subtotal.Alpa}</small></span>
         <span style="font-size:11px;font-weight:800;color:var(--blue);">Lihat ▾</span>
       </summary>
       <div class="table-wrap"><table class="tbl-absen" style="width:100%;border-collapse:collapse;font-size:11px;">
@@ -6507,6 +6585,7 @@ function rekapAbsensiPerAngkatanHtml(anggotaList, bulanDipilih){
   </div>`;
   return selector+summary+(sections||'<div class="empty-state">Belum ada data anggota untuk direkap.</div>')+(records.length?'':'<div class="empty-state">Belum ada catatan absensi pada bulan '+esc(monthLabel(selected))+'.</div>');
 }
+function statusLabelForRekap(status){ return status==='Alpa'?'Alpa / Tanpa Keterangan':status; }
 function bukaDetailGrafikAbsensi(status){
   const chart=document.getElementById('rekap-chart-view');
   const details=document.getElementById('rekap-chart-details');
@@ -6526,6 +6605,17 @@ function renderRekapAbsensiBulan(bulan){
   const target=document.getElementById('rekap-absensi-bulanan');
   if(!target)return;
   target.innerHTML=rekapAbsensiPerAngkatanHtml(DB.anggota||[],bulan);
+}
+function renderRekapAbsensiSeluruhAnggota(bulan){
+  if(!canViewRekapAnggota()){
+    document.getElementById('content').innerHTML='<div class="empty-state">⚠️ Kamu tidak memiliki akses ke Rekapitulasi Anggota.</div>';
+    return;
+  }
+  document.getElementById('content').innerHTML=`
+    <button type="button" onclick="renderRekapAnggota()" style="border:0;background:var(--bg);color:var(--blue);padding:9px 13px;border-radius:9px;font-weight:800;margin-bottom:12px;cursor:pointer;">← Kembali ke Rekapitulasi Anggota</button>
+    <div class="section-title">📊 Rekap Absensi Seluruh Anggota</div>
+    <div id="rekap-absensi-bulanan">${rekapAbsensiPerAngkatanHtml(DB.anggota||[],bulan)}</div>
+  `;
 }
 
 function renderRekapAnggota(){
@@ -6603,11 +6693,9 @@ function renderRekapAnggota(){
     </div>
 
 
-    <div class="section-title">📊 Rekap Absensi Seluruh Anggota</div>
-    <div id="rekap-absensi-bulanan">${rekapAbsensiPerAngkatanHtml(all)}</div>
-
     <div class="section-title">📋 Menu Rekapitulasi Anggota</div>
     <div class="card" style="padding:8px;">
+      <div class="admin-row rekap-menu-row" data-rekap-menu="absensi-seluruh" role="button" tabindex="0" style="cursor:pointer;"><div class="grow"><div class="name">📊 Rekap Absensi Seluruh Anggota</div><div class="meta">Lihat rekap bulanan, grafik status, dan rincian setiap angkatan</div></div>›</div>
       <div class="admin-row rekap-menu-row" data-rekap-menu="all" role="button" tabindex="0" style="cursor:pointer;"><div class="grow"><div class="name">👥 Anggota</div><div class="meta">Lihat seluruh data peserta</div></div><b>${all.length}</b> ›</div>
       <div class="admin-row rekap-menu-row" data-rekap-menu="angkatan" role="button" tabindex="0" style="cursor:pointer;"><div class="grow"><div class="name">🏷️ Total Angkatan</div><div class="meta">Lihat data peserta berdasarkan angkatan</div></div><b>${angkatan.length}</b> ›</div>
       <div class="admin-row rekap-menu-row" data-rekap-menu="school" role="button" tabindex="0" style="cursor:pointer;"><div class="grow"><div class="name">🎓 Asal Sekolah / Universitas</div><div class="meta">Klik nama sekolah/universitas untuk melihat peserta</div></div><b>${Object.keys(sekolahMap).length}</b> ›</div>
@@ -6659,7 +6747,8 @@ function renderRekapAnggota(){
     const menu=el.closest('.rekap-menu-row');
     if(menu){
       const kind=menu.getAttribute('data-rekap-menu');
-      if(kind==='all') rekapAnggotaDetail('👥 Semua Anggota',DB.anggota);
+      if(kind==='absensi-seluruh') renderRekapAbsensiSeluruhAnggota();
+      else if(kind==='all') rekapAnggotaDetail('👥 Semua Anggota',DB.anggota);
       else if(kind==='angkatan') rekapAnggotaDetail('🏷️ Total Angkatan',DB.anggota.filter(a=>String(a.angkatan||'')));
       else if(kind==='school') rekapAnggotaDetail('🎓 Asal Sekolah / Universitas',DB.anggota.filter(a=>String(a.sekolah||a.universitas||'').trim()));
       else if(kind==='jabatan') rekapAnggotaDetail('🪪 Jabatan',DB.anggota);
@@ -6762,14 +6851,47 @@ function renderAdminAnggotaList(){
   const list = DB.anggota.filter(a=>searchTextIncludes(
     [a.nama,a.angkatan,getJabatanUtama(a),getJabatanTambahan(a),a.krida,a.status].filter(v=>v!=null).join(' '), q
   ));
-  document.getElementById('admanggota-list').innerHTML = list.map(a=>`
+  document.getElementById('admanggota-list').innerHTML = list.map(a=>{
+    const akun = isAdminSystem() ? (DB.users||[]).find(u=>String(u.anggotaId)===String(a.id) && u.uid && u.role!=='admin') : null;
+    return `
     <div class="admin-row">
       ${avatarHtml(a, 38)}
       <div class="grow"><div class="name">${esc(a.nama)}</div><div class="meta">${esc(a.jabatan||'Anggota Biasa')} · Angk. ${esc(String(a.angkatan||'-'))} · ${esc(a.kategori||'Pelajar')}</div></div>
       <span class="chip ${a.status==='Aktif'?'chip-active':'chip-pending'}">${esc(a.status)}</span>
+      ${akun?`<button type="button" class="tiny-btn" title="Reset sandi akun" aria-label="Reset sandi akun" onclick="openAdminResetPassword('${esc(akun.uid)}','${esc(a.nama||akun.username)}','${esc(akun.username)}')">🔑</button>`:''}
       ${isAdminSystem()?`<div class="tiny-btn" onclick="openTunjukSebagai('${a.id}')">⚙️</div>`:''}
       <div class="tiny-btn" onclick="openAnggotaForm('${a.id}')">✎</div>
-    </div>`).join('') || '<div class="empty-state">Belum ada data anggota.</div>';
+    </div>`;
+  }).join('') || '<div class="empty-state">Belum ada data anggota.</div>';
+}
+function openAdminResetPassword(targetUid, nama, username){
+  if(!isAdminSystem()){ toast('Hanya Admin yang dapat mereset sandi anggota.'); return; }
+  if(!targetUid){ toast('ID akun anggota tidak ditemukan.'); return; }
+  openModal('🔑 Reset Kata Sandi Anggota', `
+    <div style="font-size:12px;line-height:1.6;margin-bottom:12px;">Anda akan membuat sandi baru untuk:<br><b>${esc(nama||'Anggota')}</b><br><span style="color:var(--muted);">Username: ${esc(username||'-')}</span></div>
+    <div class="hint-box" style="margin:0 0 12px;">Fitur ini digunakan jika anggota lupa sandi dan melapor kepada Admin. Sandi lama tidak perlu diketahui. Berikan sandi baru kepada anggota melalui jalur komunikasi pribadi.</div>
+    <div class="field"><label>Sandi Baru (minimal 6 karakter)</label><input id="admin-reset-pw" type="password" autocomplete="new-password" placeholder="Masukkan sandi baru"></div>
+    <div class="field"><label>Ulangi Sandi Baru</label><input id="admin-reset-pw-confirm" type="password" autocomplete="new-password" placeholder="Ulangi sandi baru"></div>
+    <div id="admin-reset-pw-error" class="error-box"></div>
+    <div style="font-size:10.5px;color:var(--muted);">Akun anggota dan data profilnya tidak dihapus atau dibuat ulang.</div>
+  `, async()=>{
+    if(!isAdminSystem()){ toast('Hanya Admin yang dapat mereset sandi anggota.'); return; }
+    const pw=document.getElementById('admin-reset-pw')?.value||'';
+    const confirmPw=document.getElementById('admin-reset-pw-confirm')?.value||'';
+    const err=document.getElementById('admin-reset-pw-error');
+    if(pw.length<6){ err.textContent='Sandi baru minimal 6 karakter.'; err.style.display='block'; return; }
+    if(pw!==confirmPw){ err.textContent='Konfirmasi sandi tidak sama.'; err.style.display='block'; return; }
+    const btn=document.getElementById('modal-save-btn');
+    if(btn){btn.disabled=true;btn.textContent='Memproses…';}
+    try{
+      await window.FB.adminResetMemberPassword(targetUid,pw);
+      closeModal();
+      toast('Sandi akun '+(username||'anggota')+' berhasil direset.');
+    }catch(e){
+      if(err){err.textContent=e?.message||'Reset sandi gagal. Periksa koneksi atau konfigurasi Edge Function.';err.style.display='block';}
+      if(btn){btn.disabled=false;btn.textContent='Simpan';}
+    }
+  },null,'Reset Sandi');
 }
 function updateJabatanTambahanInfo(){
   const sel=document.getElementById('tj-jabatan');
@@ -7225,7 +7347,8 @@ function renderAdminEkta(){
 }
 function renderAdminEkta_filter(){
   const q = (document.getElementById('admekta-search')?.value||'').toLowerCase();
-  const list = DB.anggota.filter(a=>a.status==='Aktif' && a.nama.toLowerCase().includes(q));
+  // Sertakan anggota aktif dan Calon Anggota agar Pembina/Admin dapat menerbitkan e-KTA setelah memutuskan.
+  const list = DB.anggota.filter(a=>a.nama.toLowerCase().includes(q) && (a.status==='Aktif' || a.jabatan==='Calon Anggota' || a.status==='Calon Anggota' || a.status==='Menunggu Persetujuan'));
   document.getElementById('admekta-list').innerHTML = list.map(a=>{
     const s = ektaStatusInfo(a);
     let tombol = '';
@@ -7241,14 +7364,14 @@ function renderAdminEkta_filter(){
       ${avatarHtml(a, 38)}
       <div class="grow">
         <div class="name">${esc(a.nama)}</div>
-        <div class="meta">${ektaHasBeenIssued(a) ? esc(a.noKta) : 'Belum pernah diterbitkan'} · ${ektaStatusChipHtml(a, true)}</div>
+        <div class="meta">${esc(a.jabatan||'Anggota Biasa')} · ${esc(a.status||'-')} · ${ektaHasBeenIssued(a) ? esc(a.noKta) : 'Belum pernah diterbitkan'} · ${ektaStatusChipHtml(a, true)}</div>
       </div>
       <div style="display:flex;gap:6px;flex-shrink:0;">
         <button class="tiny-btn" title="Riwayat" onclick="openEktaRiwayatModal('${a.id}')">🕘</button>
         ${tombol}
       </div>
     </div>`;
-  }).join('') || '<div class="empty-state">Tidak ada anggota aktif ditemukan.</div>';
+  }).join('') || '<div class="empty-state">Tidak ada anggota atau Calon Anggota ditemukan.</div>';
 }
 
 /* Modal Terbitkan / Terbitkan Kembali e-KTA — HANYA admin. Admin mengatur
@@ -8267,11 +8390,14 @@ function renderSuratSaya(){
 
 /* ---------------- Modal helper ---------------- */
 function openForgotPassword(){
-  openModal('Lupa Kata Sandi', `
-    <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px;">Masukkan username akunmu. Tautan reset akan dikirim ke email pemulihan jika sudah pernah ditambahkan lewat Pengaturan Akun.</div>
-    <div class="field"><label>Username</label><input id="fp-username" placeholder="Username akunmu"></div>
-    <div id="fp-msg" style="font-size:11.5px;margin-top:6px;"></div>
-    <button class="btn-primary" style="margin-top:10px;" onclick="doForgotPassword()">Kirim Tautan Reset</button>
+  openModal('Lupa Kata Sandi?', `
+    <div style="font-size:12px;line-height:1.65;color:var(--text);">
+      <div style="font-size:30px;text-align:center;margin:4px 0 10px;">🔐</div>
+      <b>Tidak bisa masuk karena lupa kata sandi?</b>
+      <p style="margin-top:7px;color:var(--muted);">Silakan lapor kepada Admin/Pembina dan sampaikan nama lengkap serta username akunmu. Admin akan memeriksa akunmu lalu membuatkan kata sandi baru.</p>
+      <div class="hint-box">Setelah menerima sandi baru dari Admin, gunakan sandi tersebut untuk masuk. Akun, username, dan data keanggotaanmu tetap sama.</div>
+      <p style="margin-top:10px;color:var(--muted);font-size:11px;">Jangan berikan kata sandi kepada orang lain selain melalui komunikasi pribadi dengan Admin yang berwenang.</p>
+    </div>
   `, null, null);
 }
 async function doForgotPassword(){
