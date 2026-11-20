@@ -1134,9 +1134,18 @@ table{max-width:100%;}
   }
   async function usersUpsertAll(users){
     const rows = (users||[]).map(userToRow);
-    if(!rows.length) return;
-    const { error } = await client.from('users').upsert(rows, { onConflict: 'username' });
-    if(error) throw error;
+    for(const row of rows){
+      if(!row.username) throw new Error('Username akun tidak boleh kosong.');
+      // Hindari UPSERT: Postgres UPSERT juga memerlukan izin INSERT walaupun
+      // baris sudah ada, sehingga dapat ditolak policy RLS saat hanya UPDATE.
+      const { data: existing, error: findError } = await client.from('users')
+        .select('username').eq('username', row.username).maybeSingle();
+      if(findError) throw findError;
+      const result = existing
+        ? await client.from('users').update(row).eq('username', row.username)
+        : await client.from('users').insert(row);
+      if(result.error) throw result.error;
+    }
   }
   async function usersDelete(username){
     const { error } = await client.from('users').delete().eq('username', username);
@@ -6507,7 +6516,7 @@ function rekapAbsensiPerAngkatanHtml(anggotaList, bulanDipilih){
   const chart=[['Hadir',total.Hadir,'#21864b'],['Izin',total.Izin,'#d99a19'],['Sakit',total.Sakit,'#3975c6'],['Alpa / Tanpa Keterangan',total.Alpa,'#c74444']];
   const chartDetails=chart.map(([label,n,color])=>{
     const status=label==='Alpa / Tanpa Keterangan'?'Alpa':label;
-    const list=memberStats.filter(a=>a._abs[status]>0).sort((a,b)=>b._abs[status]-a._abs[status]||String(a.nama||'').localeCompare(String(b.nama||'')));
+    const list=memberStats.filter(a=>status==='Alpa'?a._abs.Alpa>=3:a._abs[status]>0).sort((a,b)=>b._abs[status]-a._abs[status]||String(a.nama||'').localeCompare(String(b.nama||'')));
     const rows=list.map(a=>{
       let note='';
       if(status==='Alpa') note=a._abs.Alpa>=3?'⚠️ Masuk peringatan (minimal 3 kali)':'Belum mencapai batas peringatan';
@@ -6897,6 +6906,8 @@ function updateJabatanTambahanInfo(){
   const sel=document.getElementById('tj-jabatan');
   const box=document.getElementById('tj-jabatan-info');
   if(!sel||!box) return;
+  const periodeBox=document.getElementById('tj-periode-box');
+  if(periodeBox) periodeBox.style.display=['Ketua Dewan','Wakil Ketua Dewan'].includes(sel.value)?'block':'none';
   const info={
     'Ketua Koordinator Krida':'Memimpin koordinasi dan mengawasi keempat Ketua Krida. Tingkat jabatan lebih tinggi daripada Ketua Krida Kamtibmas, Lalu Lintas, TPTKP, dan Penanggulangan Bencana.',
     'Ketua Krida Kamtibmas':'Memimpin Krida Kamtibmas dan berada di bawah koordinasi Ketua Koordinator Krida.',
@@ -6917,6 +6928,11 @@ async function openTunjukSebagai(id){
   openModal('⚙️ Tunjuk Sebagai',`
     <div style="font-size:12px;line-height:1.5;margin-bottom:10px;">${esc(a.nama)}<br><span style="color:var(--muted);">Jabatan Utama: ${esc(getJabatanUtama(a))}</span></div>
     <div class="field"><label>Jabatan Tambahan</label><select id="tj-jabatan" onchange="updateJabatanTambahanInfo()"><option value="">Tidak ada / cabut</option>${JABATAN_TAMBAHAN_LIST.map(j=>`<option value="${j}" ${cur===j?'selected':''}>${j}</option>`).join('')}</select></div>
+    <div id="tj-periode-box" style="display:${['Ketua Dewan','Wakil Ketua Dewan'].includes(cur)?'block':'none'};padding:10px;border:1px solid var(--line);border-radius:10px;margin:8px 0;">
+      <div style="font-weight:800;font-size:12px;margin-bottom:8px;">📅 Masa Periode Jabatan</div>
+      <div class="field"><label>Tanggal Mulai</label><input type="date" id="tj-periode-mulai" value="${esc(a.periodeJabatanMulai||'')}"></div>
+      <div class="field"><label>Tanggal Berakhir</label><input type="date" id="tj-periode-selesai" value="${esc(a.periodeJabatanSelesai||'')}"></div>
+    </div>
     <div id="tj-jabatan-info" style="font-size:11px;line-height:1.5;padding:9px;border-radius:8px;background:var(--surface-2,rgba(127,127,127,.08));margin-bottom:9px;"></div>
     <div style="font-size:10.5px;color:var(--muted);">Jabatan Utama, akun, ID, username, dan kata sandi tidak diubah.</div>
   `,async()=>{
@@ -6924,21 +6940,26 @@ async function openTunjukSebagai(id){
     const select=document.getElementById('tj-jabatan');
     if(!select){ toast('Form jabatan tidak ditemukan. Silakan buka ulang menu.'); return; }
     const val=select.value||'';
+    const periodeMulai=document.getElementById('tj-periode-mulai')?.value||'';
+    const periodeSelesai=document.getElementById('tj-periode-selesai')?.value||'';
+    if(['Ketua Dewan','Wakil Ketua Dewan'].includes(val) && periodeMulai && periodeSelesai && periodeSelesai<periodeMulai){ toast('Tanggal berakhir periode tidak boleh sebelum tanggal mulai.'); return; }
     const mainRole=getJabatanUtama(a);
     // Simpan nilai lama untuk pemulihan bila penyimpanan ke Supabase gagal.
-    const before={jabatan:a.jabatan,jabatanUtama:a.jabatanUtama,jabatanTambahan:a.jabatanTambahan,jabatan_tambahan:a.jabatan_tambahan};
-    const had={jabatan:Object.prototype.hasOwnProperty.call(a,'jabatan'),jabatanUtama:Object.prototype.hasOwnProperty.call(a,'jabatanUtama'),jabatanTambahan:Object.prototype.hasOwnProperty.call(a,'jabatanTambahan'),jabatan_tambahan:Object.prototype.hasOwnProperty.call(a,'jabatan_tambahan')};
+    const before={jabatan:a.jabatan,jabatanUtama:a.jabatanUtama,jabatanTambahan:a.jabatanTambahan,jabatan_tambahan:a.jabatan_tambahan,periodeJabatanMulai:a.periodeJabatanMulai,periodeJabatanSelesai:a.periodeJabatanSelesai};
+    const had={jabatan:Object.prototype.hasOwnProperty.call(a,'jabatan'),jabatanUtama:Object.prototype.hasOwnProperty.call(a,'jabatanUtama'),jabatanTambahan:Object.prototype.hasOwnProperty.call(a,'jabatanTambahan'),jabatan_tambahan:Object.prototype.hasOwnProperty.call(a,'jabatan_tambahan'),periodeJabatanMulai:Object.prototype.hasOwnProperty.call(a,'periodeJabatanMulai'),periodeJabatanSelesai:Object.prototype.hasOwnProperty.call(a,'periodeJabatanSelesai')};
     try{
       // Gunakan jalur penyimpanan data anggota yang memang sudah dipakai aplikasi,
       // bukan RPC khusus yang dapat gagal jika fungsi SQL belum tersedia.
       a.jabatanUtama=mainRole;
       a.jabatanTambahan=val;
       a.jabatan_tambahan=val||null;
+      a.periodeJabatanMulai=['Ketua Dewan','Wakil Ketua Dewan'].includes(val)?periodeMulai:'';
+      a.periodeJabatanSelesai=['Ketua Dewan','Wakil Ketua Dewan'].includes(val)?periodeSelesai:'';
       // Pertahankan kompatibilitas pembacaan data lama tanpa mengubah jabatan utama.
       a.jabatan=val||mainRole;
       await save('anggota');
       const u=(DB.users||[]).find(x=>x.anggotaId===id);
-      if(u){u.jabatanTambahan=val;u.jabatan_tambahan=val||null;}
+      if(u){u.jabatanTambahan=val;u.jabatan_tambahan=val||null;u.periodeJabatanMulai=a.periodeJabatanMulai;u.periodeJabatanSelesai=a.periodeJabatanSelesai;}
       closeModal(); buildDrawer(); renderAdminAnggotaList();
       toast(val?('Jabatan tambahan '+val+' berhasil disimpan.'): 'Jabatan tambahan dicabut. Anggota kini tanpa jabatan tambahan.');
     }catch(e){
@@ -7018,8 +7039,14 @@ function anggotaFormHtml(a, selfEdit, secretaryEdit){
       <select id="f-jabatan-utama">${JABATAN_UTAMA_LIST.map(j=>`<option value="${esc(j)}" ${getJabatanUtama(a)===j?'selected':''}>${esc(j)}</option>`).join('')}</select>
     </div>
     <div class="field"><label>Jabatan Tambahan <span style="font-weight:400;color:var(--muted);">(hanya Admin)</span></label>
-      <select id="f-jabatan-tambahan"><option value="">Tidak ada</option>${JABATAN_TAMBAHAN_LIST.map(j=>`<option value="${esc(j)}" ${getJabatanTambahan(a)===j?'selected':''}>${esc(j)}</option>`).join('')}</select>
+      <select id="f-jabatan-tambahan" onchange="toggleFJabatanPeriode()"><option value="">Tidak ada</option>${JABATAN_TAMBAHAN_LIST.map(j=>`<option value="${esc(j)}" ${getJabatanTambahan(a)===j?'selected':''}>${esc(j)}</option>`).join('')}</select>
       <div style="font-size:10.5px;color:var(--muted);margin-top:4px;">Kosongkan jika tidak memiliki jabatan tambahan.</div>
+    </div>
+    <div id="f-jabatan-periode" style="display:${['Ketua Dewan','Wakil Ketua Dewan'].includes(getJabatanTambahan(a))?'block':'none'};padding:10px;border:1px solid var(--line);border-radius:10px;margin:8px 0;">
+      <div style="font-weight:800;font-size:12px;margin-bottom:8px;">📅 Masa Periode Jabatan</div>
+      <div class="field"><label>Tanggal Mulai</label><input type="date" id="f-periode-mulai" value="${esc(a.periodeJabatanMulai||'')}"></div>
+      <div class="field"><label>Tanggal Berakhir</label><input type="date" id="f-periode-selesai" value="${esc(a.periodeJabatanSelesai||'')}"></div>
+      <div style="font-size:10.5px;color:var(--muted);">Diisi khusus untuk Ketua Dewan dan Wakil Ketua Dewan.</div>
     </div>
     <div class="field"><label>Agama</label>
       <select id="f-agama">
@@ -7083,6 +7110,11 @@ async function handleFormPhotoChange(ev){
     document.getElementById('form-foto-preview').innerHTML=`<img src="${previewUrl}" style="width:68px;height:68px;border-radius:50%;object-fit:cover;cursor:pointer;">`;
   }catch(err){ toast('Gagal menampilkan foto.'); }
 }
+function toggleFJabatanPeriode(){
+  const jabatan=document.getElementById('f-jabatan-tambahan')?.value||'';
+  const box=document.getElementById('f-jabatan-periode');
+  if(box) box.style.display=['Ketua Dewan','Wakil Ketua Dewan'].includes(jabatan)?'block':'none';
+}
 function readAnggotaForm(){
   const kategori = document.getElementById('f-kategori') ? document.getElementById('f-kategori').value : 'Pelajar';
   let kelas = '', sekolah = '', universitas = '';
@@ -7108,6 +7140,8 @@ function readAnggotaForm(){
     angkatan: document.getElementById('f-angkatan') ? Number(document.getElementById('f-angkatan').value) : undefined,
     jabatanUtama: document.getElementById('f-jabatan-utama') ? document.getElementById('f-jabatan-utama').value : undefined,
     jabatanTambahan: document.getElementById('f-jabatan-tambahan') ? (document.getElementById('f-jabatan-tambahan').value || '') : undefined,
+    periodeJabatanMulai: document.getElementById('f-jabatan-tambahan') && ['Ketua Dewan','Wakil Ketua Dewan'].includes(document.getElementById('f-jabatan-tambahan').value) ? (document.getElementById('f-periode-mulai')?.value||'') : '',
+    periodeJabatanSelesai: document.getElementById('f-jabatan-tambahan') && ['Ketua Dewan','Wakil Ketua Dewan'].includes(document.getElementById('f-jabatan-tambahan').value) ? (document.getElementById('f-periode-selesai')?.value||'') : '',
     jabatan: document.getElementById('f-jabatan-utama') ? document.getElementById('f-jabatan-utama').value : undefined,
     agama: document.getElementById('f-agama') ? document.getElementById('f-agama').value : undefined,
     status: document.getElementById('f-status') ? document.getElementById('f-status').value : undefined,
@@ -7123,6 +7157,7 @@ function openAnggotaForm(id){
   openModal(a ? 'Edit Anggota' : 'Tambah Anggota', anggotaFormHtml(a,false,isSekretarisJabatan()), async ()=>{
     const f = readAnggotaForm();
     if(!f.nama){ toast('Nama wajib diisi.'); return; }
+    if(['Ketua Dewan','Wakil Ketua Dewan'].includes(f.jabatanTambahan||'') && f.periodeJabatanMulai && f.periodeJabatanSelesai && f.periodeJabatanSelesai < f.periodeJabatanMulai){ toast('Tanggal berakhir periode tidak boleh sebelum tanggal mulai.'); return; }
     if(window._formFotoFile){
       try{
         const targetId=a ? a.id : uid();
@@ -7147,7 +7182,7 @@ function openAnggotaForm(id){
       if(u){
         // Akun sudah ada: username field dikunci, cukup sinkronkan nama tampilan.
         u.nama = f.nama;
-        await saveUser(u);
+        if(isAdminSystem()) await saveUser(u);
       } else {
         if(DB.users.some(x=>x.username.toLowerCase()===username.toLowerCase())){ toast('Username sudah digunakan oleh akun lain.'); return; }
         if(!password || password.length<6){ toast('Kata sandi awal minimal 6 karakter.'); return; }
@@ -7221,6 +7256,35 @@ function beritaFormHtml(b){
     <div class="field"><label>Isi Keterangan</label><textarea id="f-isi" rows="5">${esc(b.isi)}</textarea></div>
     <div class="field"><label>Tautan (opsional)</label><input id="f-tautan" value="${esc(b.tautan||'')}" placeholder="https://…"></div>
   `;
+}
+// Kompres foto berita di browser sebelum disimpan agar unggahan stabil dan
+// ukuran data tidak membengkak. Menghasilkan data URL JPEG yang dapat dipratinjau.
+async function fileToCompressedDataUrl(file, maxDimension=1280, quality=0.82){
+  if(!file || !file.type || !file.type.startsWith('image/')) throw new Error('File harus berupa gambar.');
+  const dataUrl=await new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload=()=>resolve(reader.result);
+    reader.onerror=()=>reject(new Error('File foto tidak dapat dibaca.'));
+    reader.readAsDataURL(file);
+  });
+  const img=await new Promise((resolve,reject)=>{
+    const image=new Image();
+    image.onload=()=>resolve(image);
+    image.onerror=()=>reject(new Error('Format foto tidak dapat dimuat.'));
+    image.src=dataUrl;
+  });
+  const scale=Math.min(1,maxDimension/Math.max(img.naturalWidth||img.width,img.naturalHeight||img.height));
+  const canvas=document.createElement('canvas');
+  canvas.width=Math.max(1,Math.round((img.naturalWidth||img.width)*scale));
+  canvas.height=Math.max(1,Math.round((img.naturalHeight||img.height)*scale));
+  const ctx=canvas.getContext('2d');
+  if(!ctx) throw new Error('Browser tidak mendukung pemrosesan foto.');
+  ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.drawImage(img,0,0,canvas.width,canvas.height);
+  let q=quality, result=canvas.toDataURL('image/jpeg',q);
+  while(result.length>900000 && q>0.48){ q-=0.08; result=canvas.toDataURL('image/jpeg',q); }
+  if(result.length>1400000) throw new Error('Ukuran foto masih terlalu besar. Pilih foto yang lebih kecil.');
+  return result;
 }
 async function handleBeritaPhotoChange(ev){
   const file = ev.target.files && ev.target.files[0];
